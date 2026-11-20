@@ -61,7 +61,6 @@ export interface AuditDeps {
   ai: AiEngine | null;
   /** Takes one unit of the global daily AI-audit allowance; false = cap reached. */
   takeAiQuota?: () => boolean;
-  leadCapture?: boolean;
   now?: () => number;
   log?: AuditLog;
   randomId?: () => string;
@@ -345,7 +344,6 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
     stack: publicStack(stack.tech),
     fixFirst: rankFixFirst({ checks: measuredChecks }),
     attributions: cmsResult?.attributions ?? [],
-    leadCapture: !!deps.leadCapture,
     ...(omitted.length ? { omitted } : {}),
   };
 

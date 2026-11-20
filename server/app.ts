@@ -11,15 +11,18 @@ import type { Config } from './config.js';
 import { DAY, DailyCounter, HOUR, MINUTE, Semaphore, SlidingWindowLimiter, TtlLruCache } from './http/limits.js';
 import type { Clock } from './http/limits.js';
 import { createIpHasher, originAllowed, rateLimitSubject, securityHeaders, sendError } from './http/security.js';
+import type { runAudit } from './audit/runAudit.js';
+import type { CrmSync } from './crm/sync.js';
+import { createEmailChecker } from './lead/email.js';
+import type { MxResolver } from './lead/email.js';
+import { MemoryLedger } from './lead/ledger.js';
+import type { AuditLedger } from './lead/ledger.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import type { AuditEntry } from './routes/audit.js';
-import { registerLeadRoute } from './routes/lead.js';
-import type { LeadFetch } from './routes/lead.js';
 
 export const BODY_LIMIT = 8 * 1024;
 export const CACHE_MAX_ENTRIES = 500;
 export const RESULT_LIMIT_HOURLY = 30;
-export const LEAD_LIMIT_HOURLY = 10;
 
 export type AppConfig = Pick<
   Config,
@@ -35,21 +38,33 @@ export type AppConfig = Pick<
   | 'maxConcurrentAudits'
   | 'cacheTtlMin'
   | 'trustProxyHops'
-  | 'leadWebhookUrl'
   | 'typekitKitUrl'
+  | 'emailGate'
+  | 'emailHashSecret'
+  | 'auditAllowlist'
+  | 'crmSyncAllowlisted'
 >;
 
 export interface AppDeps {
   config: AppConfig;
   /** Audit dependencies, minus the per-request pieces the routes add. */
-  audit: Omit<AuditDeps, 'takeAiQuota' | 'leadCapture'>;
+  audit: Omit<AuditDeps, 'takeAiQuota'>;
   /** Built client (dist/client); null/missing → no static files (dev uses Vite). */
   clientDir?: string | null;
   logger?: FastifyServerOptions['logger'];
   now?: Clock;
   /** Salt for IP hashing; random per process by default. */
   ipSalt?: string;
-  leadFetch?: LeadFetch;
+  /** True when the Anthropic key or model was refused at boot (AI is off). */
+  aiConfigError?: boolean;
+  /** One-audit-per-email record; default in memory. */
+  ledger?: AuditLedger;
+  /** CRM sync; null/omitted = CRM off. */
+  crm?: CrmSync | null;
+  /** DNS for the email MX check; default node:dns. */
+  mxResolver?: MxResolver;
+  /** Test seam for the orchestrator. */
+  runAudit?: typeof runAudit;
   /** Wait limits for the result endpoints (tests shorten them). */
   aiWaitMs?: number;
   buyerFitWaitMs?: number;
@@ -113,7 +128,16 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
 
   app.setNotFoundHandler((req, reply) => sendError(reply, 404, { code: 'not_found', error: 'Not found.' }));
 
-  app.get('/healthz', async () => ({ ok: true, aiMode: config.aiMode, version: config.version }));
+  const ledger = deps.ledger ?? new MemoryLedger({ now });
+  const crm = deps.crm ?? null;
+  app.get('/healthz', async () => ({
+    ok: true,
+    aiMode: config.aiMode,
+    ...(deps.aiConfigError ? { aiConfigError: true } : {}),
+    version: config.version,
+    ledger: ledger.kind,
+    crm: !!crm,
+  }));
 
   // Every audit that may run at once can hold both its AI slots.
   const aiSlots = deps.aiMaxConcurrent ?? AI_SLOTS_PER_AUDIT * config.maxConcurrentAudits;
@@ -121,7 +145,6 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     audit: {
       ...deps.audit,
       ai: deps.audit.ai ? limitAiConcurrency(deps.audit.ai, new Semaphore(aiSlots)) : null,
-      leadCapture: !!config.leadWebhookUrl,
     },
     auditLimiter: new SlidingWindowLimiter({
       windows: [
@@ -139,23 +162,18 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     checkOrigin,
     ...(deps.aiWaitMs !== undefined ? { aiWaitMs: deps.aiWaitMs } : {}),
     ...(deps.buyerFitWaitMs !== undefined ? { buyerFitWaitMs: deps.buyerFitWaitMs } : {}),
-  });
-
-  if (config.leadWebhookUrl) {
-    registerLeadRoute(app, {
-      webhookUrl: config.leadWebhookUrl,
-      limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: LEAD_LIMIT_HOURLY }], now }),
-      ipKey,
-      checkOrigin,
-      topIdeas: (auditId, domain) => {
-        const e = byId.get(auditId);
-        if (!e || e.report.domain !== domain.replace(/^www\./, '')) return [];
-        return (e.aiResult?.ai?.opportunities ?? []).map((o) => o.title).slice(0, 3);
-      },
-      ...(deps.leadFetch ? { fetchImpl: deps.leadFetch } : {}),
+    lead: {
+      gate: config.emailGate,
+      secret: config.emailHashSecret,
+      allowlist: config.auditAllowlist,
+      crmSyncAllowlisted: config.crmSyncAllowlisted,
+      ledger,
+      emailChecker: createEmailChecker({ ...(deps.mxResolver ? { resolver: deps.mxResolver } : {}), now }),
+      crm,
       now,
-    });
-  }
+    },
+    ...(deps.runAudit ? { runAudit: deps.runAudit } : {}),
+  });
 
   // ----- Static client -----
   const clientDir = deps.clientDir ?? null;

@@ -1,5 +1,5 @@
 // Form helpers: URL normalisation and request building. Pure.
-import type { AuditRequest, Persona, TeamSize } from '../../shared/types.js';
+import type { AuditStartBody, Persona, TeamSize } from '../../shared/types.js';
 
 export interface FormValues {
   url: string;
@@ -10,6 +10,9 @@ export interface FormValues {
   trigger: string;
   teamSize: TeamSize | '';
   timeSink: string;
+  email: string;
+  name: string;
+  marketingOptIn: boolean;
 }
 
 export const EMPTY_FORM: FormValues = {
@@ -21,6 +24,9 @@ export const EMPTY_FORM: FormValues = {
   trigger: '',
   teamSize: '',
   timeSink: '',
+  email: '',
+  name: '',
+  marketingOptIn: false,
 };
 
 export const LIMITS = {
@@ -31,6 +37,8 @@ export const LIMITS = {
   sector: 200,
   trigger: 300,
   timeSink: 200,
+  email: 254,
+  name: 100,
 } as const;
 
 const TEAM_SIZES: readonly TeamSize[] = ['1-10', '11-50', '51-200', '200+'];
@@ -56,11 +64,27 @@ export const normaliseUrlInput = (raw: string): UrlCheck => {
   return { ok: true, url: parsed.toString() };
 };
 
+export type EmailCheck = { ok: true; email: string } | { ok: false; reason: 'empty' | 'invalid' };
+
+/** Loose syntax check only (something@domain.tld); the server does the real checks. */
+export const checkEmailInput = (raw: string): EmailCheck => {
+  const email = raw.trim();
+  if (!email) return { ok: false, reason: 'empty' };
+  if (email.length > LIMITS.email || !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) return { ok: false, reason: 'invalid' };
+  return { ok: true, email };
+};
+
 const clip = (v: string, max: number): string => v.trim().slice(0, max);
 
-/** Builds the API body. Blank optional fields are left out, never replaced by defaults. */
-export const buildRequest = (values: FormValues, url: string): AuditRequest => {
-  const req: AuditRequest = { url };
+/**
+ * Builds the API body. Blank optional fields are left out, never replaced by defaults.
+ * `name` is sent only when non-blank and `marketingOptIn` only when ticked.
+ */
+export const buildRequest = (values: FormValues, url: string): AuditStartBody => {
+  const req: AuditStartBody = { url, email: values.email.trim() };
+  const name = clip(values.name, LIMITS.name);
+  if (name) req.name = name;
+  if (values.marketingOptIn === true) req.marketingOptIn = true;
   const businessType = clip(values.businessType, LIMITS.businessType);
   if (businessType) req.businessType = businessType;
 

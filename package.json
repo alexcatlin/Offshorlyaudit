@@ -13,7 +13,8 @@
     "start": "NODE_ENV=production node dist/server/index.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "harness": "tsx scripts/harness.ts"
+    "harness": "tsx scripts/harness.ts",
+    "twenty:check": "tsx scripts/twenty-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.11.0",

@@ -20,7 +20,7 @@ import {
   LOADING_STAGES,
   TEAM_SIZE_OPTIONS,
 } from '../../src/content/copy.js';
-import type { ErrorCode } from '../../shared/types.js';
+import { ERROR_CODES } from '../../src/lib/errors.js';
 
 /** Collect every visitor-facing string, calling copy functions with sample arguments. */
 const collectStrings = (value: unknown, out: string[] = []): string[] => {
@@ -31,15 +31,6 @@ const collectStrings = (value: unknown, out: string[] = []): string[] => {
   return out;
 };
 
-const ALL_ERROR_CODES: ErrorCode[] = [
-  'bad_request',
-  'forbidden',
-  'site_not_found',
-  'site_unreadable',
-  'rate_limited',
-  'busy',
-  'server_error',
-];
 
 const visitorStrings = (): string[] => [
   ...collectStrings(CHECK_TEXT),
@@ -48,7 +39,7 @@ const visitorStrings = (): string[] => [
   ...collectStrings(CONFIDENCE_LABELS),
   ...collectStrings(LOADING_STAGES),
   ...collectStrings(TEAM_SIZE_OPTIONS),
-  ...ALL_ERROR_CODES.map((c) => ERROR_COPY[c]('The site did not respond.', 120)),
+  ...ERROR_CODES.map((c) => ERROR_COPY[c]('The site did not respond.', 120)),
   ...collectStrings(PROOFS),
   ...collectStrings(CTA),
 ];

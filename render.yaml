@@ -1,15 +1,28 @@
-# Render Blueprint (PLAN Phase 10). One web service, ONE instance: rate limits, the AI daily cap
-# and the audit cache live in memory, so scaling out would split them.
+# Render Blueprint (PLAN Phase 10, Amendment 3). One web service, ONE instance: rate limits, the
+# AI daily cap and the audit cache live in memory, so scaling out would split them.
+#
+# disk ⇒ no zero-downtime deploys; keep numInstances 1. Render stops the old instance before
+# starting the new one (a short outage on every deploy), and a service with a disk can't scale
+# past one instance (render.com/docs/disks, "Disk limitations and considerations"). The disk is
+# mounted at runtime only: nothing in the build touches /var/data.
+#
+# First deploy: every `sync: false` variable may be left blank (AI off, CRM off, gate inactive).
+# Render prompts for `sync: false` values only when the Blueprint is first created; add later
+# secrets in the service's Environment page.
 services:
   - type: web
     name: offshorly-audit
     runtime: node
-    plan: starter            # no sleep on idle (the free plan adds ~50 s to the first audit)
+    plan: starter            # no sleep on idle; disks need a paid plan
     region: frankfurt        # closest Render region to the UK; change before first deploy if needed
     numInstances: 1
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start  # sets NODE_ENV=production
     healthCheckPath: /healthz
+    disk:
+      name: audit-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 20.20.1
@@ -21,16 +34,36 @@ services:
       # Dormant: leave empty (module targets a retired feed shape; see README "Wordfence (dormant)").
       - key: WORDFENCE_API_KEY
         sync: false
-      - key: LEAD_WEBHOOK_URL
-        sync: false
       # --- AI ---
       # Empty = live when ANTHROPIC_API_KEY is set, otherwise off. fixture refuses to start here.
+      # A refused key or unknown model starts with AI off and "aiConfigError":true in /healthz.
       - key: AI_MODE
         sync: false
       - key: AUDIT_MODEL
         sync: false
+      # --- Email gate (one free audit per email) ---
+      # Never change EMAIL_HASH_SECRET: a new value resets the one-per-email record.
+      - key: EMAIL_HASH_SECRET
+        generateValue: true
+      - key: LEDGER_PATH
+        value: /var/data/audit-ledger.jsonl
+      - key: LEDGER_RETENTION_DAYS
+        value: "365"
+      - key: EMAIL_GATE
+        value: "on"
+      - key: AUDIT_ALLOWLIST
+        value: "@offshorly.com"
+      - key: CRM_SYNC_ALLOWLISTED
+        value: "false"
+      # --- Twenty CRM: both blank = CRM off ---
+      # Cloud: https://api.twenty.com ; self-hosted: your Twenty server origin.
+      - key: TWENTY_API_URL
+        sync: false
+      - key: TWENTY_API_KEY
+        sync: false
       # --- Origins and embedding ---
-      # e.g. https://audit.offshorly.com once the custom domain exists; until then the onrender.com URL.
+      # Blank on the first deploy (the widget calls its own origin). Set to
+      # https://audit.offshorly.com once the custom domain exists.
       - key: PUBLIC_ORIGIN
         sync: false
       - key: ALLOWED_FRAME_ANCESTORS

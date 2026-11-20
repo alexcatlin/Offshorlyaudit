@@ -129,6 +129,17 @@ export interface AuditRequest {
   timeSink?: string;
 }
 
+/** Lead fields sent with POST /api/audit. Never part of AuditRequest, the cache key or any prompt. */
+export interface LeadFields {
+  email: string;
+  /** ≤100, sanitised server-side. */
+  name?: string;
+  marketingOptIn?: boolean;
+}
+
+/** Body of POST /api/audit. The server splits it; runAudit sees AuditRequest only. */
+export type AuditStartBody = AuditRequest & LeadFields;
+
 // ---------- Checks ----------
 
 export type Status = 'pass' | 'warn' | 'fail' | 'info';
@@ -350,7 +361,6 @@ export interface AuditReport {
   fixFirst: FixItem[];
   /** e.g. Wordfence when used */
   attributions: string[];
-  leadCapture: boolean;
   /** Measured parts that missed the audit deadline and were left out (their checks are omitted). */
   omitted?: MeasuredPart[];
 }
@@ -386,7 +396,11 @@ export type ErrorCode =
   | 'not_found'
   | 'rate_limited'
   | 'busy'
-  | 'server_error';
+  | 'server_error'
+  /** 400: missing, malformed, disposable or undeliverable email. */
+  | 'email_invalid'
+  /** 409: this email already had its free audit (of another site). */
+  | 'email_used';
 
 export interface ApiError {
   code: ErrorCode;

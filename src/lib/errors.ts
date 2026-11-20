@@ -2,16 +2,21 @@
 import type { ErrorCode } from '../../shared/types.js';
 import { COPY, ERROR_COPY } from '../content/copy.js';
 
-const ERROR_CODES: readonly ErrorCode[] = [
-  'bad_request',
-  'forbidden',
-  'site_not_found',
-  'site_unreadable',
-  'not_found',
-  'rate_limited',
-  'busy',
-  'server_error',
-];
+/** Every ErrorCode once; the Record type makes a missing or extra code a type error. */
+const CODE_SET: Record<ErrorCode, true> = {
+  bad_request: true,
+  forbidden: true,
+  site_not_found: true,
+  site_unreadable: true,
+  not_found: true,
+  rate_limited: true,
+  busy: true,
+  server_error: true,
+  email_invalid: true,
+  email_used: true,
+};
+
+export const ERROR_CODES: readonly ErrorCode[] = Object.keys(CODE_SET) as ErrorCode[];
 
 export const isErrorCode = (v: unknown): v is ErrorCode =>
   typeof v === 'string' && (ERROR_CODES as readonly string[]).includes(v);
@@ -30,6 +35,7 @@ const STATUS_FALLBACK: Record<number, ErrorCode> = {
   400: 'bad_request',
   403: 'forbidden',
   404: 'not_found',
+  409: 'email_used',
   413: 'bad_request',
   422: 'site_unreadable',
   429: 'rate_limited',

@@ -1,7 +1,10 @@
 // Environment parsing and validation (docs/PLAN.md "Env vars").
 // Values are never logged. `.env.local` is loaded only outside production and only if present.
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseAllowlist } from './lead/email.js';
+import type { Allowlist } from './lead/email.js';
 
 export type AiMode = 'live' | 'fixture' | 'off';
 
@@ -28,8 +31,22 @@ export interface Config {
   maxConcurrentAudits: number;
   cacheTtlMin: number;
   trustProxyHops: number;
-  leadWebhookUrl: string | null;
   typekitKitUrl: string | null;
+  /** One free audit per email; 'off' still requires and syncs the email. */
+  emailGate: 'on' | 'off';
+  /** HMAC secret for the gate key. Random per process when unset (see emailHashSecretGenerated). */
+  emailHashSecret: string;
+  emailHashSecretGenerated: boolean;
+  /** JSONL ledger on the persistent disk; null = in memory. */
+  ledgerPath: string | null;
+  ledgerRetentionDays: number;
+  /** Addresses/domains that skip the gate and are never recorded. */
+  auditAllowlist: Allowlist;
+  /** Sync allow-listed audits to the CRM too (Note title prefixed "[Test] "). */
+  crmSyncAllowlisted: boolean;
+  /** Twenty origin; null (or no key) = CRM off. */
+  twentyApiUrl: string | null;
+  twentyApiKey: string | null;
 }
 
 export class ConfigError extends Error {
@@ -44,6 +61,7 @@ type Env = Record<string, string | undefined>;
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'];
 export const DEFAULT_FRAME_ANCESTORS = ['https://offshorly.com', 'https://www.offshorly.com'];
 export const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:8787'];
+export const DEFAULT_ALLOWLIST = ['@offshorly.com'];
 
 const str = (env: Env, key: string): string | null => {
   const v = env[key]?.trim();
@@ -128,20 +146,33 @@ export const loadConfig = (env: Env = process.env): Config => {
     if (!FRAME_SOURCE_RE.test(f)) throw new ConfigError('ALLOWED_FRAME_ANCESTORS must be space-separated origins like https://example.com.');
   }
 
-  const leadWebhookUrl = str(env, 'LEAD_WEBHOOK_URL');
-  if (leadWebhookUrl) {
-    let u: URL | null = null;
-    try {
-      u = new URL(leadWebhookUrl);
-    } catch {
-      /* handled below */
-    }
-    if (!u || u.protocol !== 'https:') throw new ConfigError('LEAD_WEBHOOK_URL must be an https URL.');
-  }
-
   const typekitKitUrl = str(env, 'TYPEKIT_KIT_URL');
   if (typekitKitUrl && !/^https:\/\/use\.typekit\.net\/[a-z0-9]+\.css$/i.test(typekitKitUrl)) {
     throw new ConfigError('TYPEKIT_KIT_URL must look like https://use.typekit.net/<kit>.css.');
+  }
+
+  const gateRaw = str(env, 'EMAIL_GATE')?.toLowerCase() ?? 'on';
+  if (gateRaw !== 'on' && gateRaw !== 'off') throw new ConfigError('EMAIL_GATE must be on or off.');
+
+  const secretRaw = str(env, 'EMAIL_HASH_SECRET');
+  if (secretRaw !== null && secretRaw.length < 16) throw new ConfigError('EMAIL_HASH_SECRET must be at least 16 characters.');
+
+  const allowEntries = list(env, 'AUDIT_ALLOWLIST') ?? DEFAULT_ALLOWLIST;
+  const allow = parseAllowlist(allowEntries);
+  if (!allow.ok) throw new ConfigError('AUDIT_ALLOWLIST entries must be email addresses or @domain.');
+
+  const crmAllowRaw = str(env, 'CRM_SYNC_ALLOWLISTED')?.toLowerCase() ?? 'false';
+  if (crmAllowRaw !== 'true' && crmAllowRaw !== 'false') throw new ConfigError('CRM_SYNC_ALLOWLISTED must be true or false.');
+
+  const twentyRaw = str(env, 'TWENTY_API_URL');
+  let twentyApiUrl: string | null = null;
+  if (twentyRaw) {
+    twentyApiUrl = parseOrigin('TWENTY_API_URL', twentyRaw);
+    const host = new URL(twentyApiUrl).hostname;
+    const localHttp = twentyApiUrl.startsWith('http:') && (host === 'localhost' || host === '127.0.0.1') && !isProduction;
+    if (!twentyApiUrl.startsWith('https:') && !localHttp) {
+      throw new ConfigError('TWENTY_API_URL must be an https origin (http://localhost is allowed outside production).');
+    }
   }
 
   const logLevel = str(env, 'LOG_LEVEL')?.toLowerCase() ?? 'info';
@@ -167,7 +198,15 @@ export const loadConfig = (env: Env = process.env): Config => {
     maxConcurrentAudits: int(env, 'MAX_CONCURRENT_AUDITS', 4, 1, 100),
     cacheTtlMin: int(env, 'CACHE_TTL_MIN', 360, 1, 10_080),
     trustProxyHops: int(env, 'TRUST_PROXY_HOPS', 1, 0, 10),
-    leadWebhookUrl,
     typekitKitUrl,
+    emailGate: gateRaw,
+    emailHashSecret: secretRaw ?? randomBytes(32).toString('base64'),
+    emailHashSecretGenerated: secretRaw === null,
+    ledgerPath: str(env, 'LEDGER_PATH'),
+    ledgerRetentionDays: int(env, 'LEDGER_RETENTION_DAYS', 365, 30, 1825),
+    auditAllowlist: allow.value,
+    crmSyncAllowlisted: crmAllowRaw === 'true',
+    twentyApiUrl,
+    twentyApiKey: str(env, 'TWENTY_API_KEY'),
   };
 };

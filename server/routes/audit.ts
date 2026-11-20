@@ -1,12 +1,21 @@
 // POST /api/audit, GET /api/audit/:auditId/ai, GET /api/audit/:auditId/buyer-fit
-// (PLAN Phase 7, Amendments 1 and 2).
+// (PLAN Phase 7, Amendments 1, 2 and 3).
+//
+// Amendment 3: the POST body carries lead fields (email required). The route splits it into
+// `{audit: AuditRequest, lead: LeadFields}`; the email never reaches runAudit, the cache key, a
+// prompt or a log line (logs carry the 12-hex prefix of the HMAC key only).
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AiResult, AuditReport, AuditRequest, BuyerFitResult } from '../../shared/types.js';
+import type { AiResult, AuditReport, AuditRequest, BuyerFitResult, LeadFields } from '../../shared/types.js';
 import { runAudit, validateAuditRequest } from '../audit/runAudit.js';
 import type { AuditDeps, AuditRun } from '../audit/runAudit.js';
+import type { CrmSync } from '../crm/sync.js';
 import type { DailyCounter, Semaphore, SlidingWindowLimiter, TtlLruCache } from '../http/limits.js';
 import { sendError } from '../http/security.js';
+import { EMAIL_INVALID_MESSAGE, emailKey, isAllowlisted, logHash, validateLeadFields } from '../lead/email.js';
+import type { Allowlist, EmailChecker } from '../lead/email.js';
+import { ledgerAllows } from '../lead/ledger.js';
+import type { AuditLedger } from '../lead/ledger.js';
 import { SiteReadError } from '../site/errors.js';
 import { normaliseInputUrl } from '../site/readSite.js';
 
@@ -36,9 +45,47 @@ export interface AuditRouteDeps {
   checkOrigin: (req: FastifyRequest) => boolean;
   aiWaitMs?: number;
   buyerFitWaitMs?: number;
+  lead: LeadDeps;
+  /** Test seam: defaults to runAudit. */
+  runAudit?: typeof runAudit;
+}
+
+export interface LeadDeps {
+  gate: 'on' | 'off';
+  secret: string;
+  allowlist: Allowlist;
+  crmSyncAllowlisted: boolean;
+  ledger: AuditLedger;
+  emailChecker: EmailChecker;
+  crm: CrmSync | null;
+  now: () => number;
 }
 
 class BusyError extends Error {}
+
+const BUSY_MESSAGE = 'Too many audits are running. Please try again in a minute.';
+
+export const NOTICE_VERSION = 'v1' as const;
+
+/** The validated POST body, split: runAudit only ever sees `audit`. */
+export type StartBody = { ok: true; audit: AuditRequest; lead: LeadFields } | { ok: false; code: 'bad_request' | 'email_invalid'; error: string };
+
+export const validateStartBody = (body: unknown): StartBody => {
+  const audit = validateAuditRequest(body);
+  if (!audit.ok) return { ok: false, code: 'bad_request', error: audit.error };
+  const lead = validateLeadFields(body);
+  if (!lead.ok) return lead;
+  return { ok: true, audit: audit.value, lead: lead.value };
+};
+
+/**
+ * The allowance is used only by a 200 where AI ran or legitimately didn't apply: the initial
+ * report doesn't have both statuses 'unavailable' (AI off, daily cap, no slots). 'thin' counts.
+ */
+export const usesAllowance = (report: AuditReport): boolean =>
+  !(report.aiStatus === 'unavailable' && report.buyerFitStatus === 'unavailable');
+
+const inputHost = (url: URL): string => url.hostname.toLowerCase().replace(/^www\./, '');
 
 const AUDIT_ID_RE = /^[A-Za-z0-9_-]{22,64}$/;
 
@@ -118,12 +165,18 @@ const waitFor = <T>(p: Promise<T>, ms: number, fallback: () => T): Promise<T> =>
 export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps): void => {
   const forbidden = (reply: FastifyReply) => sendError(reply, 403, { code: 'forbidden', error: 'Forbidden.' });
 
+  const run = deps.runAudit ?? runAudit;
+  const lead = deps.lead;
+  /** Gate keys with an audit in flight, and for which domain. */
+  const pending = new Map<string, { domain: string; count: number }>();
+
   app.post('/api/audit', async (req, reply) => {
     if (!deps.checkOrigin(req)) return forbidden(reply);
 
-    const valid = validateAuditRequest(req.body);
-    if (!valid.ok) return sendError(reply, 400, { code: 'bad_request', error: valid.error });
-    const request = valid.value;
+    const valid = validateStartBody(req.body);
+    if (!valid.ok) return sendError(reply, 400, { code: valid.code, error: valid.error });
+    const request = valid.audit;
+    const fields = valid.lead;
 
     let url: URL;
     try {
@@ -132,6 +185,7 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       return sendError(reply, 422, { code: 'site_not_found', error: (e as Error).message });
     }
 
+    // Before the email checks, so probing addresses costs IP allowance. No refund on email_used.
     const ip = deps.ipKey(req);
     const limit = deps.auditLimiter.hit(ip);
     if (!limit.ok) {
@@ -142,22 +196,52 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       });
     }
 
-    const key = cacheKey(request, url);
-    const keys = [key];
+    const emailCheck = await lead.emailChecker.check(fields.email);
+    if (emailCheck !== 'ok') return sendError(reply, 400, { code: 'email_invalid', error: EMAIL_INVALID_MESSAGE });
+
+    const key = emailKey(lead.secret, fields.email);
+    const meta = { emailHash: logHash(key) };
+    const host = inputHost(url);
+    const allowlisted = isAllowlisted(lead.allowlist, fields.email);
+    const gated = lead.gate === 'on' && !allowlisted;
+    const submittedAt = new Date(lead.now()).toISOString();
+
+    if (gated) {
+      let allowed = true;
+      try {
+        allowed = ledgerAllows(await lead.ledger.get(key), host);
+      } catch (e) {
+        req.log.error({ ...meta, error: (e as { code?: string }).code ?? (e as Error).name }, 'ledger_unavailable');
+      }
+      if (!allowed) {
+        req.log.info(meta, 'email gate: already used');
+        return sendError(reply, 409, { code: 'email_used', error: 'This email has already been used for a free audit.' });
+      }
+      const p = pending.get(key);
+      if (p && p.domain !== host) {
+        // No refund and the generic busy wording: this reply must not be a free probe of
+        // which addresses have an audit in flight.
+        return sendError(reply, 503, { code: 'busy', error: BUSY_MESSAGE });
+      }
+      pending.set(key, { domain: host, count: (p?.count ?? 0) + 1 });
+    }
+
+    const auditKey = cacheKey(request, url);
+    const keys = [auditKey];
     let uncacheable = false;
     try {
-      const { value: entry, hit } = await deps.byKey.getOrCreate(key, async () => {
+      const { value: entry, hit } = await deps.byKey.getOrCreate(auditKey, async () => {
         const release = deps.semaphore.tryAcquire();
         if (!release) throw new BusyError();
         try {
-          const run = await runAudit(request, { ...deps.audit, takeAiQuota: () => deps.aiQuota.tryTake() });
-          const e = entryFromRun(run);
-          deps.byId.set(run.report.auditId, e);
+          const r = await run(request, { ...deps.audit, takeAiQuota: () => deps.aiQuota.tryTake() });
+          const e = entryFromRun(r);
+          deps.byId.set(r.report.auditId, e);
           // AI skipped for want of slots: keep it off the URL keys so a retry runs fresh.
-          uncacheable = run.aiBusy;
+          uncacheable = r.aiBusy;
           // Also reachable by the final URL (e.g. "example.com" and "https://www.example.com/").
-          const finalKey = cacheKey(request, new URL(run.finalUrl));
-          if (finalKey !== key && !uncacheable) {
+          const finalKey = cacheKey(request, new URL(r.finalUrl));
+          if (finalKey !== auditKey && !uncacheable) {
             deps.byKey.set(finalKey, e);
             keys.push(finalKey);
           }
@@ -170,12 +254,40 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       else if (uncacheable) {
         for (const k of keys) if (deps.byKey.peek(k) === entry) deps.byKey.delete(k);
       } else forgetOnAiFailure(deps.byKey, entry, keys);
+
+      if (gated && usesAllowance(entry.report)) {
+        try {
+          const { created } = await lead.ledger.record(key, [...new Set([host, entry.report.domain])]);
+          if (created) req.log.info({ ...meta, auditId: entry.report.auditId }, 'email gate: recorded');
+        } catch (e) {
+          req.log.error({ ...meta, error: (e as { code?: string }).code ?? (e as Error).name }, 'ledger record failed');
+        }
+      }
+      if (lead.crm && (!allowlisted || lead.crmSyncAllowlisted)) {
+        // Fire-and-forget: never awaited, never allowed to affect the response.
+        try {
+          lead.crm.enqueue(
+            {
+              email: fields.email.toLowerCase(),
+              ...(fields.name ? { name: fields.name } : {}),
+              marketingOptIn: fields.marketingOptIn === true,
+              consentAt: submittedAt,
+              noticeVersion: NOTICE_VERSION,
+              emailHash: key,
+              test: allowlisted,
+            },
+            entry,
+          );
+        } catch (e) {
+          req.log.error({ ...meta, error: (e as Error).name }, 'crm enqueue failed');
+        }
+      }
       return reply.send(hit ? reportWithSettled(entry) : entry.report);
     } catch (e) {
       if (e instanceof BusyError) {
         // A refused audit doesn't use up the visitor's allowance.
         deps.auditLimiter.refund(ip);
-        return sendError(reply, 503, { code: 'busy', error: 'Too many audits are running. Please try again in a minute.' });
+        return sendError(reply, 503, { code: 'busy', error: BUSY_MESSAGE });
       }
       if (e instanceof SiteReadError) {
         return sendError(reply, 422, {
@@ -185,6 +297,12 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       }
       req.log.error({ err: e }, 'audit failed');
       return sendError(reply, 500, { code: 'server_error', error: 'Something went wrong.' });
+    } finally {
+      if (gated) {
+        const p = pending.get(key);
+        if (p && p.count > 1) p.count--;
+        else pending.delete(key);
+      }
     }
   });
 

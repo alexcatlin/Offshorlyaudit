@@ -14,6 +14,7 @@ import type {
   Status,
   TeamSize,
 } from '../../shared/types.js';
+import { CTA } from '../../shared/services.js';
 
 export interface LoadingStage {
   /** Seconds after submit when this message appears. */
@@ -128,6 +129,9 @@ export const ERROR_COPY: Record<ErrorCode, (serverError: string, retryAfterSec?:
   not_found: () => 'This report has expired. Please run the audit again.',
   busy: () => "We're running a lot of audits right now. Please try again in a minute.",
   server_error: () => 'Something went wrong on our side. Please try again.',
+  email_invalid: () => "We couldn't confirm that email address can receive email. Please check it and try again.",
+  email_used: () =>
+    "This email has already been used for a free audit. Want to go further? Book a free 30-minute call and we'll walk through your site and where AI could help.",
 };
 
 export const COPY = {
@@ -167,10 +171,21 @@ export const COPY = {
     timeSinkLabel: "What eats most of your team's week?",
     timeSinkPlaceholder: 'For example: typing up quotes, chasing invoices, answering the same customer emails',
     timeSinkMaxLength: 200,
+    emailLabel: 'Your email',
+    emailPlaceholder: 'you@yourcompany.com',
+    emailRequired: 'Please enter your email address.',
+    emailInvalid: "That doesn't look like an email address. Please check it and try again.",
+    nameLabel: 'Your name',
+    namePlaceholder: 'For example: Sam Taylor',
+    /** Under the email/name row; followed by the privacy policy link. */
+    leadNotice:
+      "We'll add your email, the site you audit and its results to Offshorly's CRM so we can follow up about this audit. One free audit per email.",
+    marketingOptIn: 'Email me occasional ideas and offers from Offshorly. You can unsubscribe at any time.',
     submit: 'Run the audit',
     privacyNotice:
-      "We read the public pages of the site you enter and use Anthropic's Claude to analyse them. Please don't enter personal information.",
+      "We read the public pages of the site you enter and use Anthropic's Claude to analyse them. Your email is never sent to Anthropic.",
     privacyLinkLabel: 'Privacy policy',
+    emailUsedContact: "Or tell us what you're building",
   },
 
   loading: {
@@ -382,7 +397,7 @@ export const COPY = {
     websiteHeading: 'Want a hand with any of this?',
     websiteText:
       "We build and look after websites, and we'll tell you straight which fixes matter and which can wait.",
-    primary: 'Book a free AI consultation',
+    primary: CTA.consultation.label,
     secondary: "Tell us what you're building",
   },
 
@@ -391,7 +406,7 @@ export const COPY = {
     disclaimer:
       'Passive checks only: we look at what your site shows any visitor. This is not a penetration test.',
     privacy:
-      "We don't save reports: there are no accounts or share links, and results are held only briefly in memory to avoid repeat work. The text of the pages we read is sent to Anthropic's Claude for analysis.",
+      "We don't save reports or create share links. We keep your email, the site you audited and a summary of the results in our CRM to follow up. Results are otherwise held briefly in memory. The text of the pages we read is sent to Anthropic's Claude for analysis.",
     newAudit: 'Run another audit',
   },
 

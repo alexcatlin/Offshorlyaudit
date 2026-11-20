@@ -1,9 +1,9 @@
 import type { ComponentChildren } from 'preact';
-import { useId, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { CTA } from '../../shared/services.js';
-import type { TeamSize } from '../../shared/types.js';
+import type { ErrorCode, TeamSize } from '../../shared/types.js';
 import { BUSINESS_TYPE_SUGGESTIONS, COPY, EXAMPLE_BUYER, TEAM_SIZE_OPTIONS } from '../content/copy.js';
-import { LIMITS, normaliseUrlInput, type FormValues } from '../lib/form.js';
+import { checkEmailInput, LIMITS, normaliseUrlInput, type FormValues } from '../lib/form.js';
 import { ExternalLink } from './ui.js';
 
 const F = COPY.form;
@@ -11,6 +11,8 @@ const F = COPY.form;
 interface Props {
   initial: FormValues;
   error: string | null;
+  /** Code of the server error, when there was one: picks the alert style and focus. */
+  errorCode?: ErrorCode | 'network' | null;
   onSubmit: (values: FormValues, url: string) => void;
 }
 
@@ -42,6 +44,24 @@ const Expander = ({
   );
 };
 
+/**
+ * Shown in place of the form error on 409 email_used. Deliberately does not say which
+ * site the email was used for.
+ */
+export const EmailUsedAlert = ({ message }: { message: string }) => (
+  <div class="oa-alert oa-alert--info" role="alert">
+    <p>{message}</p>
+    <div class="oa-alert__actions">
+      <ExternalLink class="oa-button oa-button--primary" href={CTA.consultation.url}>
+        {CTA.consultation.label}
+      </ExternalLink>
+      <ExternalLink class="oa-alert__link" href={CTA.contact.url}>
+        {F.emailUsedContact}
+      </ExternalLink>
+    </div>
+  </div>
+);
+
 const Field = ({
   id,
   label,
@@ -66,13 +86,21 @@ const Field = ({
   </div>
 );
 
-export const Form = ({ initial, error, onSubmit }: Props) => {
+export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
   const [v, setV] = useState<FormValues>(initial);
   const [urlError, setUrlError] = useState<string | null>(null);
+  // A server email_invalid is shown on the email field itself, not as a form alert.
+  const [emailError, setEmailError] = useState<string | null>(errorCode === 'email_invalid' ? error : null);
+  const formError = errorCode === 'email_invalid' ? null : error;
   const hasBuyer = !!(initial.businessType || initial.role || initial.size || initial.sector || initial.trigger);
   const [buyerOpen, setBuyerOpen] = useState(hasBuyer);
   const [detailOpen, setDetailOpen] = useState(!!(initial.teamSize || initial.timeSink));
   const urlRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (errorCode === 'email_invalid') emailRef.current?.focus();
+  }, []);
   const uid = useId();
   const fid = (name: string) => `oa-${name}-${uid}`;
 
@@ -82,6 +110,7 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
       const value = (e.currentTarget as HTMLInputElement).value as FormValues[K];
       setV((prev) => ({ ...prev, [key]: value }));
       if (key === 'url') setUrlError(null);
+      if (key === 'email') setEmailError(null);
     };
 
   const submit = (e: Event) => {
@@ -90,6 +119,12 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
     if (!check.ok) {
       setUrlError(check.reason === 'empty' ? F.urlRequired : F.urlInvalid);
       urlRef.current?.focus();
+      return;
+    }
+    const email = checkEmailInput(v.email);
+    if (!email.ok) {
+      setEmailError(email.reason === 'empty' ? F.emailRequired : F.emailInvalid);
+      emailRef.current?.focus();
       return;
     }
     onSubmit(v, check.url);
@@ -101,6 +136,8 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
   };
 
   const urlErrId = fid('url-error');
+  const emailErrId = fid('email-error');
+  const leadNoticeId = fid('lead-notice');
   const formErrId = fid('form-error');
 
   return (
@@ -109,19 +146,23 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
         <h1 class="oa-hero__title">{COPY.hero.title}</h1>
         <p class="oa-hero__sub">{COPY.hero.sub}</p>
 
-        <form class="oa-form" onSubmit={submit} noValidate aria-describedby={error ? formErrId : undefined}>
-          {error && (
-            <div class="oa-alert" role="alert" id={formErrId}>
-              {error}
-            </div>
-          )}
+        <form class="oa-form" onSubmit={submit} noValidate aria-describedby={formError ? formErrId : undefined}>
+          {formError &&
+            (errorCode === 'email_used' ? (
+              <div id={formErrId}>
+                <EmailUsedAlert message={formError} />
+              </div>
+            ) : (
+              <div class="oa-alert" role="alert" id={formErrId}>
+                {formError}
+              </div>
+            ))}
 
           <div class="oa-field">
             <label class="oa-label" for={fid('url')}>
               {F.urlLabel}
             </label>
-            <div class="oa-url-row">
-              <input
+            <input
                 ref={urlRef}
                 id={fid('url')}
                 class={urlError ? 'oa-input has-error' : 'oa-input'}
@@ -138,10 +179,6 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
                 aria-invalid={urlError ? true : undefined}
                 aria-describedby={urlError ? `${urlErrId} ${fid('url')}-hint` : `${fid('url')}-hint`}
               />
-              <button type="submit" class="oa-button oa-button--primary oa-url-row__submit">
-                {F.submit}
-              </button>
-            </div>
             {urlError && (
               <p class="oa-field-error" id={urlErrId}>
                 {urlError}
@@ -151,6 +188,73 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
               {F.urlHint}
             </p>
           </div>
+
+          <div class="oa-grid-2 oa-lead-row">
+            <div class="oa-field">
+              <label class="oa-label" for={fid('email')}>
+                {F.emailLabel}
+              </label>
+              <input
+                ref={emailRef}
+                id={fid('email')}
+                class={emailError ? 'oa-input has-error' : 'oa-input'}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellcheck={false}
+                required
+                maxLength={LIMITS.email}
+                placeholder={F.emailPlaceholder}
+                value={v.email}
+                onInput={set('email')}
+                aria-invalid={emailError ? true : undefined}
+                aria-describedby={emailError ? `${emailErrId} ${leadNoticeId}` : leadNoticeId}
+              />
+              {emailError && (
+                <p class="oa-field-error" id={emailErrId}>
+                  {emailError}
+                </p>
+              )}
+            </div>
+            <div class="oa-field">
+              <label class="oa-label" for={fid('name')}>
+                {F.nameLabel} <span class="oa-label__optional">{F.optional}</span>
+              </label>
+              <input
+                id={fid('name')}
+                class="oa-input"
+                type="text"
+                autoComplete="name"
+                maxLength={LIMITS.name}
+                placeholder={F.namePlaceholder}
+                value={v.name}
+                onInput={set('name')}
+              />
+            </div>
+          </div>
+          <p class="oa-privacy oa-lead-notice" id={leadNoticeId}>
+            {F.leadNotice} <ExternalLink href={CTA.privacy.url}>{F.privacyLinkLabel}</ExternalLink>
+          </p>
+
+          <label class="oa-optin">
+            <input
+              type="checkbox"
+              class="oa-optin__box"
+              checked={v.marketingOptIn}
+              onChange={(e) => {
+                const checked = (e.currentTarget as HTMLInputElement).checked;
+                setV((prev) => ({ ...prev, marketingOptIn: checked }));
+              }}
+            />
+            <span>{F.marketingOptIn}</span>
+          </label>
+
+          <button type="submit" class="oa-button oa-button--primary oa-form__submit">
+            {F.submit}
+          </button>
+
+          <p class="oa-privacy">{F.privacyNotice}</p>
 
           <Expander label={F.buyerToggle} open={buyerOpen} onToggle={() => setBuyerOpen((o) => !o)}>
             <p class="oa-expander__help">
@@ -218,10 +322,6 @@ export const Form = ({ initial, error, onSubmit }: Props) => {
               />
             </Field>
           </Expander>
-
-          <p class="oa-privacy">
-            {F.privacyNotice} <ExternalLink href={CTA.privacy.url}>{F.privacyLinkLabel}</ExternalLink>
-          </p>
         </form>
       </div>
     </section>

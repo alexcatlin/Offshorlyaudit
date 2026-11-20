@@ -138,11 +138,7 @@ export const proofUrl = (id: ProofId): string => offshorlyUrl(PROOFS[id].path);
 
 export const CTA = {
   consultation: {
-    label: 'Book a free AI consultation',
-    url: 'https://offshorly.com/free-ai-consultation/',
-  },
-  calCom: {
-    label: 'Book a free AI consultation',
+    label: 'Book a free 30-minute consultation',
     url: 'https://cal.com/offshorly/30min',
   },
   contact: {

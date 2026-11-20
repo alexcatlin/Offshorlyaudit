@@ -1,6 +1,7 @@
 // DEV ONLY. Fake API for building the UI before the real routes exist.
 // Enabled by ?mock=1 when import.meta.env.DEV is true (see src/api.ts); never in production builds.
 // Pick a variant with &case=full|no-wp|ai-unavailable|buyerfit-unavailable|thin|error-unreadable|rate-limited.
+// &emailUsed=1 answers every POST with 409 email_used; a blank or malformed email gets 400 email_invalid.
 // All content is marked "[Sample]" and flagged fixture.
 import { rankFixFirst } from '../../shared/reportLogic.js';
 import type {
@@ -8,6 +9,7 @@ import type {
   AiSection,
   AuditReport,
   AuditRequest,
+  AuditStartBody,
   BuyerFit,
   BuyerFitResult,
   CheckResult,
@@ -291,7 +293,6 @@ const baseReport = (req: AuditRequest, mockCase: MockCase): AuditReport => {
     ],
     fixFirst: rankFixFirst({ checks: [...security, ...health] }),
     attributions: wp ? ['Vulnerability data: Wordfence Intelligence'] : [],
-    leadCapture: false,
   };
 };
 
@@ -306,19 +307,28 @@ export const createMockTransport = (search: string): Transport => {
   const params = new URLSearchParams(search);
   const raw = params.get('case') ?? 'full';
   const mockCase: MockCase = (CASES as readonly string[]).includes(raw) ? (raw as MockCase) : 'full';
+  const emailUsed = params.get('emailUsed') === '1';
   const audits = new Map<string, Pending>();
   console.info(`[mock api] ${MOCK_MARKER} case=${mockCase}`);
 
   return async (method, path, body): Promise<HttpResult> => {
     if (method === 'POST' && path === '/api/audit') {
       await wait(POST_DELAY_MS);
+      const email = (body as Partial<AuditStartBody> | undefined)?.email;
+      if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return { status: 400, body: { code: 'email_invalid', error: '[Sample] Email not accepted.' } };
+      }
+      if (emailUsed) {
+        return { status: 409, body: { code: 'email_used', error: '[Sample] This email has already been used.' } };
+      }
       if (mockCase === 'error-unreadable') {
         return { status: 422, body: { code: 'site_unreadable', error: '[Sample] The site refused our request (HTTP 403).' } };
       }
       if (mockCase === 'rate-limited') {
         return { status: 429, body: { code: 'rate_limited', error: 'Too many audits', retryAfterSec: 1740 } };
       }
-      const req = body as AuditRequest;
+      // Drop the lead fields: like the server, the audit itself never sees the email.
+      const { email: _email, name: _name, marketingOptIn: _optIn, ...req } = body as AuditStartBody;
       const report = baseReport(req, mockCase);
       audits.set(report.auditId, { req, report, mockCase, startedAt: Date.now() });
       return { status: 200, body: report };

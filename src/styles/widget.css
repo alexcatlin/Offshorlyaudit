@@ -609,13 +609,61 @@ button {
   font-size: 15px;
 }
 
-.oa-url-row {
+.oa-alert--info {
+  border-color: var(--oa-purple);
+  background: var(--oa-tint);
+  color: var(--oa-text);
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+.oa-alert__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
 }
 
-.oa-url-row__submit {
+.oa-alert__link {
+  font-weight: 600;
+  text-align: center;
+}
+
+.oa-label__optional {
+  font-family: var(--oa-font-body);
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--oa-muted-strong);
+}
+
+.oa-lead-row {
+  gap: 16px;
+}
+
+.oa-lead-notice {
+  margin-top: -6px;
+}
+
+.oa-optin {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--oa-text);
+  cursor: pointer;
+}
+
+.oa-optin__box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--oa-purple);
+  cursor: pointer;
+}
+
+.oa-form__submit {
   width: 100%;
   font-size: 17px;
   padding: 14px 22px;
@@ -708,12 +756,14 @@ button {
   .oa-form {
     padding: 28px;
   }
-  .oa-url-row {
-    flex-direction: row;
-  }
-  .oa-url-row__submit {
+  .oa-form__submit {
     width: auto;
-    flex: none;
+    align-self: flex-start;
+  }
+  .oa-alert__actions {
+    flex-direction: row;
+    align-items: center;
+    gap: 18px;
   }
   .oa-grid-2 {
     grid-template-columns: 1fr 1fr;

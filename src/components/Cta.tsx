@@ -18,7 +18,7 @@ export const Cta = ({ variant }: { variant: keyof typeof CONTENT }) => (
     </div>
     <div class="oa-cta__buttons">
       <ExternalLink class="oa-button oa-button--on-dark" href={CTA.consultation.url}>
-        {COPY.cta.primary}
+        {CTA.consultation.label}
       </ExternalLink>
       <ExternalLink class="oa-button oa-button--outline-dark" href={CTA.contact.url}>
         {COPY.cta.secondary}

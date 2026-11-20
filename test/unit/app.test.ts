@@ -2,13 +2,12 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuditReport, BuyerFitResult } from '../../shared/types.js';
 import { buildApp } from '../../server/app.js';
-import { sanitiseLeadName, validateLead } from '../../server/routes/lead.js';
-import { appConfig, appDeps, auditDeps, controlledEngine, deferred, ORIGIN, sampleAi, sampleBuyerFit, siteRoutes } from './_appMock.js';
+import { sanitiseLeadName, validateLeadFields } from '../../server/lead/email.js';
+import { appConfig, appDeps, auditDeps, controlledEngine, deferred, fakeMx, ORIGIN, sampleAi, sampleBuyerFit, siteRoutes } from './_appMock.js';
 
 let app: FastifyInstance | null = null;
 afterEach(async () => {
@@ -17,8 +16,15 @@ afterEach(async () => {
   app = null;
 });
 
+// Every audit needs an email (Amendment 3). These tests aren't about the gate, so each call gets
+// a fresh address unless the payload brings its own (see app.gate.test.ts for the gate).
+let emailN = 0;
+const withEmail = (payload: unknown): unknown =>
+  payload && typeof payload === 'object' && !Array.isArray(payload) && !('email' in payload)
+    ? { ...payload, email: `visitor${++emailN}@mail.example` }
+    : payload;
 const post = (a: FastifyInstance, payload: unknown, headers: Record<string, string> = ORIGIN) =>
-  a.inject({ method: 'POST', url: '/api/audit', headers, payload: payload as object });
+  a.inject({ method: 'POST', url: '/api/audit', headers, payload: withEmail(payload) as object });
 
 describe('POST /api/audit', () => {
   it('200 with mocked network and fixture AI; buyer fit and AI pending', async () => {
@@ -29,14 +35,14 @@ describe('POST /api/audit', () => {
     expect(r.buyerFitStatus).toBe('pending');
     expect(r.aiStatus).toBe('pending');
     expect(r.fixture).toBe(true);
-    expect(r.leadCapture).toBe(false);
+    expect('leadCapture' in r).toBe(false);
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('returns before a slow AI resolves; each GET then returns its result', async () => {
     const c = controlledEngine();
     const { calls: _c, ...audit } = auditDeps(siteRoutes(), { ai: c.engine });
-    app = await buildApp({ config: appConfig({ aiMode: 'live' }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live' }), audit });
     const res = await post(app, { url: 'acme.example' });
     expect(res.statusCode).toBe(200);
     const r = res.json<AuditReport>();
@@ -84,7 +90,7 @@ describe('POST /api/audit', () => {
   it('dedupes concurrent identical requests into one audit', async () => {
     const c = controlledEngine();
     const { calls: _c, ...audit } = auditDeps(siteRoutes(), { ai: c.engine });
-    app = await buildApp({ config: appConfig(), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig(), audit });
     const [a, b] = await Promise.all([post(app, { url: 'acme.example' }), post(app, { url: 'acme.example' })]);
     expect(a.json().auditId).toBe(b.json().auditId);
     expect(c.calls()).toBe(1);
@@ -154,7 +160,7 @@ describe('POST /api/audit', () => {
   it('503 when every audit slot is busy', async () => {
     const routes = { ...siteRoutes(), ...siteRoutes('slow.example', { delayMs: 300 }) };
     const { calls: _c, ...audit } = auditDeps(routes);
-    app = await buildApp({ config: appConfig({ maxConcurrentAudits: 1 }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ maxConcurrentAudits: 1 }), audit });
     const slow = post(app, { url: 'slow.example' });
     await new Promise((r) => setTimeout(r, 50));
     const busy = await post(app, { url: 'acme.example' });
@@ -166,7 +172,7 @@ describe('POST /api/audit', () => {
   it('a 503 busy refusal does not use up the rate-limit slot', async () => {
     const routes = { ...siteRoutes(), ...siteRoutes('slow.example', { delayMs: 300 }) };
     const { calls: _c, ...audit } = auditDeps(routes);
-    app = await buildApp({ config: appConfig({ maxConcurrentAudits: 1, rateLimitHourly: 2 }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ maxConcurrentAudits: 1, rateLimitHourly: 2 }), audit });
     const slow = post(app, { url: 'slow.example' });
     await new Promise((r) => setTimeout(r, 50));
     expect((await post(app, { url: 'acme.example' })).statusCode).toBe(503);
@@ -178,7 +184,7 @@ describe('POST /api/audit', () => {
 
   it('IPv6 addresses in one /64 share a limit; mapped IPv4 counts as the IPv4 address', async () => {
     app = await buildApp({ ...appDeps(), config: appConfig({ trustProxyHops: 0, rateLimitHourly: 1 }) });
-    const from = (remoteAddress: string) => app!.inject({ method: 'POST', url: '/api/audit', headers: ORIGIN, payload: { url: 'acme.example' }, remoteAddress });
+    const from = (remoteAddress: string) => app!.inject({ method: 'POST', url: '/api/audit', headers: ORIGIN, payload: withEmail({ url: 'acme.example' }) as object, remoteAddress });
     expect((await from('2001:db8:1:2::1')).statusCode).toBe(200);
     expect((await from('2001:db8:1:2:ffff:abcd:1234:9')).statusCode).toBe(429);
     expect((await from('2001:db8:1:3::1')).statusCode).toBe(200);
@@ -189,7 +195,7 @@ describe('POST /api/audit', () => {
   it('TRUST_PROXY_HOPS=1: the limit is keyed on the real client, not a spoofed leading X-Forwarded-For entry', async () => {
     app = await buildApp({ ...appDeps(), config: appConfig({ trustProxyHops: 1, rateLimitHourly: 1 }) });
     const via = (xff: string) =>
-      app!.inject({ method: 'POST', url: '/api/audit', headers: { ...ORIGIN, 'x-forwarded-for': xff }, payload: { url: 'acme.example' }, remoteAddress: '10.0.0.1' });
+      app!.inject({ method: 'POST', url: '/api/audit', headers: { ...ORIGIN, 'x-forwarded-for': xff }, payload: withEmail({ url: 'acme.example' }) as object, remoteAddress: '10.0.0.1' });
     expect((await via('1.1.1.1, 198.51.100.7')).statusCode).toBe(200);
     // Same real client (last entry, appended by the proxy), different spoofed first entry: still limited.
     expect((await via('9.9.9.9, 198.51.100.7')).statusCode).toBe(429);
@@ -215,7 +221,7 @@ describe('POST /api/audit', () => {
       opportunities: async () => ({ status: 'ok' as const, ai: sampleAi() }),
     };
     const { calls: _c, ...audit } = auditDeps(siteRoutes(), { ai: engine });
-    app = await buildApp({ config: appConfig({ aiMode: 'live' }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live' }), audit });
     const first = (await post(app, { url: 'acme.example' })).json<AuditReport>();
     const bf = await app.inject({ method: 'GET', url: `/api/audit/${first.auditId}/buyer-fit`, headers: ORIGIN });
     expect(bf.json().buyerFitStatus).toBe('unavailable');
@@ -234,7 +240,7 @@ describe('POST /api/audit', () => {
     const hosts = ['a1.example', 'a2.example', 'a3.example', 'a4.example'];
     const c = controlledEngine(); // holds every slot until resolved
     const { calls: _c, ...audit } = auditDeps(Object.assign({}, ...hosts.map((h) => siteRoutes(h))), { ai: c.engine });
-    app = await buildApp({ config: appConfig({ aiMode: 'live', maxConcurrentAudits: 4, rateLimitHourly: 50 }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live', maxConcurrentAudits: 4, rateLimitHourly: 50 }), audit });
     const reports = await Promise.all(hosts.map(async (h) => (await post(app!, { url: h })).json<AuditReport>()));
     for (const r of reports) expect([r.aiStatus, r.buyerFitStatus]).toEqual(['pending', 'pending']);
     expect(c.calls()).toBe(4);
@@ -258,7 +264,7 @@ describe('POST /api/audit', () => {
     const routes = Object.assign({}, siteRoutes('a1.example'), siteRoutes('a2.example'), siteRoutes('a3.example'));
     const { calls: _c, ...audit } = auditDeps(routes, { ai: engine });
     // One audit's worth of slots (2) and two AI audits a day.
-    app = await buildApp({ config: appConfig({ aiMode: 'live', maxConcurrentAudits: 1, dailyAiAudits: 2, rateLimitHourly: 50 }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live', maxConcurrentAudits: 1, dailyAiAudits: 2, rateLimitHourly: 50 }), audit });
 
     const first = (await post(app, { url: 'a1.example' })).json<AuditReport>();
     expect(first.aiStatus).toBe('pending');
@@ -321,7 +327,7 @@ describe('GET result endpoints', () => {
   it("'unavailable' after the 50 s and 80 s wait limits (fake timers)", async () => {
     const c = controlledEngine(); // never resolves
     const { calls: _c, ...audit } = auditDeps(siteRoutes(), { ai: c.engine });
-    app = await buildApp({ config: appConfig({ aiMode: 'live' }), audit });
+    app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live' }), audit });
     const r = (await post(app, { url: 'acme.example' })).json<AuditReport>();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -362,60 +368,24 @@ describe('GET result endpoints', () => {
   });
 });
 
-describe('lead route', () => {
-  it('is a 404 when LEAD_WEBHOOK_URL is unset', async () => {
+describe('lead fields', () => {
+  it('/api/lead is gone (404)', async () => {
     app = await buildApp(appDeps());
     const res = await app.inject({ method: 'POST', url: '/api/lead', headers: ORIGIN, payload: { email: 'a@b.example', consent: true, domain: 'acme.example' } });
     expect(res.statusCode).toBe(404);
   });
 
-  it('forwards to the webhook when set, never logging the email', async () => {
-    const lines: string[] = [];
-    const stream = new Writable({
-      write(chunk, _enc, cb) {
-        lines.push(String(chunk));
-        cb();
-      },
-    });
-    const leadFetch = vi.fn(async () => ({ ok: true, status: 200 }));
-    app = await buildApp({
-      ...appDeps({ logger: { level: 'info', stream } as never, leadFetch }),
-      config: appConfig({ leadWebhookUrl: 'https://hooks.example/lead' }),
-    });
-    const report = (await post(app, { url: 'acme.example' })).json<AuditReport>();
-    expect(report.leadCapture).toBe(true);
-    await app.inject({ method: 'GET', url: `/api/audit/${report.auditId}/ai`, headers: ORIGIN });
-
-    const bad = await app.inject({ method: 'POST', url: '/api/lead', headers: ORIGIN, payload: { email: 'jo@acme.example', consent: false, domain: 'acme.example' } });
-    expect(bad.statusCode).toBe(400);
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/lead',
-      headers: ORIGIN,
-      payload: { email: 'jo@acme.example', name: 'Jo', consent: true, domain: 'acme.example', auditId: report.auditId },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(leadFetch).toHaveBeenCalledTimes(1);
-    const [url, init] = leadFetch.mock.calls[0] as unknown as [string, { body: string }];
-    expect(url).toBe('https://hooks.example/lead');
-    const body = JSON.parse(init.body);
-    expect(body).toMatchObject({ email: 'jo@acme.example', name: 'Jo', domain: 'acme.example', source: 'audit-widget' });
-    expect(body.topIdeas.length).toBeGreaterThan(0);
-    expect(body.consentText).toBeTruthy();
-    expect(body.consentAt).toMatch(/^\d{4}-/);
-    const logs = lines.join('');
-    expect(logs).toContain('lead forwarded');
-    expect(logs).not.toContain('jo@acme.example');
-    expect(logs).not.toContain('127.0.0.1');
-  });
-});
-
-describe('lead name sanitising', () => {
-  it('strips angle brackets, pipes and control characters before the webhook', () => {
+  it('sanitises the optional name: no angle brackets, pipes or control characters', () => {
     expect(sanitiseLeadName('Jo <!channel> <https://evil.example|click>\u0007 Smith')).toBe('Jo !channel https://evil.exampleclick Smith');
-    const v = validateLead({ email: 'jo@acme.example', name: '  <@U123>|Jo\nBloggs ', consent: true, domain: 'acme.example' });
+    const v = validateLeadFields({ email: 'jo@acme.example', name: '  <@U123>|Jo\nBloggs ' });
     expect(v).toMatchObject({ ok: true, value: { name: '@U123Jo Bloggs' } });
-    expect(validateLead({ email: 'jo@acme.example', name: '<>|', consent: true, domain: 'acme.example' })).toMatchObject({ ok: true, value: { email: 'jo@acme.example' } });
+    expect(validateLeadFields({ email: 'jo@acme.example', name: '<>|' })).toEqual({ ok: true, value: { email: 'jo@acme.example' } });
+    expect(validateLeadFields({ email: 'jo@acme.example', name: 'x'.repeat(101) })).toMatchObject({ ok: false, code: 'bad_request', error: 'name is too long.' });
+    expect(validateLeadFields({ email: 'jo@acme.example', name: 42 })).toEqual({ ok: false, code: 'bad_request', error: 'name must be text.' });
+    expect(validateLeadFields({ email: 'jo@acme.example', name: ['Jo'] })).toEqual({ ok: false, code: 'bad_request', error: 'name must be text.' });
+    expect(validateLeadFields({ email: 'jo@acme.example', marketingOptIn: 'yes' })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(validateLeadFields({ email: 'jo@acme.example', marketingOptIn: true })).toEqual({ ok: true, value: { email: 'jo@acme.example', marketingOptIn: true } });
+    expect(validateLeadFields({ url: 'a.example' })).toMatchObject({ ok: false, code: 'email_invalid' });
   });
 });
 
@@ -430,7 +400,7 @@ describe('health, static files and headers', () => {
   it('GET /healthz', async () => {
     app = await buildApp(appDeps());
     const res = await app.inject({ method: 'GET', url: '/healthz' });
-    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test' });
+    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test', ledger: 'memory', crm: false });
   });
 
   it('serves index.html with CSP frame-ancestors, no X-Frame-Options, and security headers', async () => {

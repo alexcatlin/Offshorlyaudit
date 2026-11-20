@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AiResult, AuditReport, BuyerFit, BuyerFitResult } from '../../shared/types.js';
-import { toAuditError, parseRetryAfter, isErrorCode } from '../../src/lib/errors.js';
-import { buildRequest, EMPTY_FORM, normaliseUrlInput } from '../../src/lib/form.js';
+import { h, type ComponentChildren, type VNode } from 'preact';
+import { toAuditError, parseRetryAfter, isErrorCode, ERROR_CODES } from '../../src/lib/errors.js';
+import { buildRequest, checkEmailInput, EMPTY_FORM, normaliseUrlInput } from '../../src/lib/form.js';
+import { ERROR_COPY } from '../../src/content/copy.js';
+import { CTA } from '../../shared/services.js';
+import { Cta } from '../../src/components/Cta.js';
+import { EmailUsedAlert } from '../../src/components/Form.js';
 import {
   markUnavailable,
   mergeAi,
@@ -75,18 +80,39 @@ describe('normaliseUrlInput / buildRequest', () => {
     expect(normaliseUrlInput('localhost')).toEqual({ ok: false, reason: 'invalid' });
   });
   it('leaves blank optional fields out instead of defaulting them', () => {
-    expect(buildRequest(EMPTY_FORM, 'https://a.com/')).toEqual({ url: 'https://a.com/' });
+    expect(buildRequest(EMPTY_FORM, 'https://a.com/')).toEqual({ url: 'https://a.com/', email: '' });
     const req = buildRequest(
       { ...EMPTY_FORM, businessType: ' Law Firm ', role: 'Founder', sector: '  ', teamSize: '11-50', timeSink: 'quotes' },
       'https://a.com/',
     );
     expect(req).toEqual({
       url: 'https://a.com/',
+      email: '',
       businessType: 'Law Firm',
       persona: { role: 'Founder' },
       teamSize: '11-50',
       timeSink: 'quotes',
     });
+  });
+  it('sends a trimmed email, name only when non-blank and opt-in only when ticked', () => {
+    const base = { ...EMPTY_FORM, email: '  Sam@Example.co.uk ' };
+    expect(buildRequest(base, 'https://a.com/')).toEqual({ url: 'https://a.com/', email: 'Sam@Example.co.uk' });
+    expect(buildRequest({ ...base, name: '   ', marketingOptIn: false }, 'https://a.com/')).not.toHaveProperty('name');
+    expect(buildRequest({ ...base, marketingOptIn: false }, 'https://a.com/')).not.toHaveProperty('marketingOptIn');
+    expect(buildRequest({ ...base, name: ' Sam Taylor ', marketingOptIn: true }, 'https://a.com/')).toEqual({
+      url: 'https://a.com/',
+      email: 'Sam@Example.co.uk',
+      name: 'Sam Taylor',
+      marketingOptIn: true,
+    });
+    expect(buildRequest({ ...base, name: 'x'.repeat(300) }, 'https://a.com/').name).toHaveLength(100);
+  });
+  it('checks email syntax loosely', () => {
+    expect(checkEmailInput('  ')).toEqual({ ok: false, reason: 'empty' });
+    expect(checkEmailInput(' a@b.co ')).toEqual({ ok: true, email: 'a@b.co' });
+    for (const bad of ['a', 'a@b', 'a@@b.com', 'a b@c.com', 'a@b.', '@b.com', `${'x'.repeat(250)}@b.com`]) {
+      expect(checkEmailInput(bad).ok, bad).toBe(false);
+    }
   });
   it('clips over-long fields', () => {
     const req = buildRequest({ ...EMPTY_FORM, timeSink: 'x'.repeat(500) }, 'https://a.com/');
@@ -117,7 +143,6 @@ const baseReport = (): AuditReport => ({
   stack: [],
   fixFirst: [{ source: 'check', section: 'security', checkId: 'sec-csp' }],
   attributions: [],
-  leadCapture: false,
 });
 
 const bf: BuyerFit = {
@@ -233,5 +258,81 @@ describe('WordPress panel names (shared displayName)', () => {
     expect(displayName({ type: 'theme', slug: 'evil\u0000\u001bslug', name: null })).toBe('evilslug');
     expect(displayName({ type: 'plugin', slug: 'x', name: 'y'.repeat(80) }).length).toBeLessThanOrEqual(51);
     expect(COPY.wordpress.plugins).toBe('Plugins and theme');
+  });
+});
+
+describe('error copy for every code', () => {
+  it('has friendly text for every ErrorCode, including the email codes', () => {
+    for (const code of ERROR_CODES) {
+      expect(typeof ERROR_COPY[code], code).toBe('function');
+      expect(ERROR_COPY[code]('', 60).length, code).toBeGreaterThan(10);
+    }
+    expect(Object.keys(ERROR_COPY).sort()).toEqual([...ERROR_CODES].sort());
+    expect(ERROR_CODES).toContain('email_invalid');
+    expect(ERROR_CODES).toContain('email_used');
+  });
+  it('maps email_invalid and email_used, and 409 without a body to email_used', () => {
+    expect(toAuditError(400, { code: 'email_invalid', error: 'x' }).code).toBe('email_invalid');
+    const used = toAuditError(409, { code: 'email_used', error: 'example.com was audited' });
+    expect(used.code).toBe('email_used');
+    expect(used.message).toContain('Book a free 30-minute call');
+    expect(used.message).not.toContain('example.com');
+    expect(toAuditError(409, null).code).toBe('email_used');
+  });
+});
+
+/** Expands function components so the rendered element tree can be inspected without a DOM. */
+const expand = (node: unknown): unknown => {
+  if (Array.isArray(node)) return node.map(expand);
+  if (!node || typeof node !== 'object' || !('type' in node)) return node;
+  const v = node as VNode<{ children?: ComponentChildren }>;
+  if (typeof v.type === 'function') return expand((v.type as (p: unknown) => unknown)(v.props));
+  return { type: v.type, props: { ...v.props, children: expand(v.props.children) } };
+};
+
+interface El {
+  type: string;
+  props: Record<string, unknown> & { children?: unknown };
+}
+
+const findAll = (node: unknown, pred: (el: El) => boolean, out: El[] = []): El[] => {
+  if (Array.isArray(node)) node.forEach((n) => findAll(n, pred, out));
+  else if (node && typeof node === 'object' && 'type' in node) {
+    const el = node as El;
+    if (pred(el)) out.push(el);
+    findAll(el.props.children, pred, out);
+  }
+  return out;
+};
+
+const textOf = (node: unknown): string => {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join('');
+  return textOf((node as El).props?.children);
+};
+
+describe('consultation CTA', () => {
+  const calLinks = (tree: unknown) => findAll(tree, (el) => el.type === 'a' && el.props.href === CTA.consultation.url);
+
+  it('is the Cal.com 30-minute link in a new tab, with no personal data in the URL', () => {
+    expect(CTA.consultation.url).toBe('https://cal.com/offshorly/30min');
+    for (const variant of ['ai', 'pitch', 'website'] as const) {
+      const links = calLinks(expand(h(Cta, { variant })));
+      expect(links, variant).toHaveLength(1);
+      const a = links[0]!;
+      expect(a.props.target).toBe('_blank');
+      expect(a.props.rel).toBe('noopener');
+      expect(textOf(a)).toContain(CTA.consultation.label);
+    }
+  });
+
+  it('appears in the email_used alert, which never names an audited site', () => {
+    const tree = expand(h(EmailUsedAlert, { message: ERROR_COPY.email_used('', undefined) }));
+    const links = calLinks(tree);
+    expect(links).toHaveLength(1);
+    expect(links[0]!.props.target).toBe('_blank');
+    expect(findAll(tree, (el) => el.type === 'a' && el.props.href === CTA.contact.url)).toHaveLength(1);
+    expect(textOf(tree)).not.toMatch(/\.(com|co\.uk|org)\b/);
   });
 });

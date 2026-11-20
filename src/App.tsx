@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { AuditReport, AuditRequest } from '../shared/types.js';
+import type { AuditReport, AuditRequest, ErrorCode } from '../shared/types.js';
 import { AuditError, fetchAi, fetchBuyerFit, startAudit } from './api.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { Form } from './components/Form.js';
@@ -13,7 +13,7 @@ import { markUnavailable, mergeAi, mergeBuyerFit } from './lib/report.js';
 import { captureScrollAnchor } from './lib/scrollAnchor.js';
 
 type State =
-  | { phase: 'form'; error: string | null }
+  | { phase: 'form'; error: string | null; errorCode: ErrorCode | 'network' | null }
   | { phase: 'loading'; domain: string }
   | { phase: 'report'; report: AuditReport; request: AuditRequest };
 
@@ -36,7 +36,7 @@ export interface DevAutorun {
 }
 
 export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: DevAutorun }) => {
-  const [state, setState] = useState<State>({ phase: 'form', error: null });
+  const [state, setState] = useState<State>({ phase: 'form', error: null, errorCode: null });
   const [values, setValues] = useState<FormValues>(EMPTY_FORM);
   /** Bumped on every new audit, so late responses from an earlier one are ignored. */
   const generation = useRef(0);
@@ -86,7 +86,8 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
     } catch (err) {
       if (gen !== generation.current) return;
       const message = err instanceof AuditError ? err.message : COPY.errors.network;
-      setState({ phase: 'form', error: message });
+      const errorCode = err instanceof AuditError ? err.code : 'network';
+      setState({ phase: 'form', error: message, errorCode });
       scrollToTop();
     }
   };
@@ -94,12 +95,12 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
   useEffect(() => {
     if (!devAutorun) return;
     const check = normaliseUrlInput(devAutorun.url);
-    if (check.ok) void submit({ ...EMPTY_FORM, url: devAutorun.url }, check.url);
+    if (check.ok) void submit({ ...EMPTY_FORM, url: devAutorun.url, email: 'dev@example.com' }, check.url);
   }, []);
 
   const restart = () => {
     generation.current++;
-    setState({ phase: 'form', error: null });
+    setState({ phase: 'form', error: null, errorCode: null });
     scrollToTop();
   };
 
@@ -117,7 +118,7 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
       )}
       <main class="oa-main">
         <ErrorBoundary onReset={restart}>
-          {state.phase === 'form' && <Form key="form" initial={values} error={state.error} onSubmit={submit} />}
+          {state.phase === 'form' && <Form key="form" initial={values} error={state.error} errorCode={state.errorCode} onSubmit={submit} />}
           {state.phase === 'loading' && <Loading domain={state.domain} />}
           {state.phase === 'report' && <Report report={state.report} request={state.request} onRestart={restart} initialTab={devAutorun?.tab} />}
         </ErrorBoundary>

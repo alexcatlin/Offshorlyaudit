@@ -6,6 +6,8 @@ import { fixtureEngine } from '../../server/audit/aiEngine.js';
 import type { AuditDeps } from '../../server/audit/runAudit.js';
 import type { AppConfig, AppDeps } from '../../server/app.js';
 import type { WpOrgClient } from '../../server/cms/wordpressOrg.js';
+import { parseAllowlist } from '../../server/lead/email.js';
+import type { Allowlist, MxResolver } from '../../server/lead/email.js';
 import { createFetchSafe } from '../../server/site/fetchSafe.js';
 import type { FetchLikeInit } from '../../server/site/fetchSafe.js';
 import { mockFetch, mockResolve } from './_siteMock.js';
@@ -153,14 +155,44 @@ export const appConfig = (over: Partial<AppConfig> = {}): AppConfig => ({
   maxConcurrentAudits: 4,
   cacheTtlMin: 360,
   trustProxyHops: 1,
-  leadWebhookUrl: null,
   typekitKitUrl: null,
+  emailGate: 'on',
+  emailHashSecret: 'test-secret-0123456789abcdef',
+  auditAllowlist: allowlist('@offshorly.com'),
+  crmSyncAllowlisted: false,
   ...over,
 });
 
+export const allowlist = (...entries: string[]): Allowlist => {
+  const r = parseAllowlist(entries);
+  if (!r.ok) throw new Error(`bad allow-list entry ${r.entry}`);
+  return r.value;
+};
+
+const dnsError = (code: string) => Object.assign(new Error(code), { code });
+
+/**
+ * Offline DNS for the email MX check: every domain has MX, except
+ * nxdomain.example (NXDOMAIN), a-only.example (A record only) and nomail.example (no records).
+ */
+export const fakeMx: MxResolver = {
+  resolveMx: async (d) => {
+    if (d === 'nxdomain.example') throw dnsError('ENOTFOUND');
+    if (d === 'a-only.example' || d === 'nomail.example') throw dnsError('ENODATA');
+    return [{ exchange: `mx.${d}`, priority: 10 }];
+  },
+  resolve4: async (d) => {
+    if (d === 'a-only.example') return ['192.0.2.1'];
+    throw dnsError(d === 'nxdomain.example' ? 'ENOTFOUND' : 'ENODATA');
+  },
+  resolve6: async (d) => {
+    throw dnsError(d === 'nxdomain.example' ? 'ENOTFOUND' : 'ENODATA');
+  },
+};
+
 export const appDeps = (over: Partial<AppDeps> = {}, routes = siteRoutes()): AppDeps => {
   const { calls: _calls, ...audit } = auditDeps(routes);
-  return { config: appConfig(), audit, ...over };
+  return { config: appConfig(), audit, mxResolver: fakeMx, ...over };
 };
 
 export const ORIGIN = { origin: 'https://audit.example' };

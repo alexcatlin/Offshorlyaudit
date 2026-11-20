@@ -92,5 +92,5 @@ Websites and Web Apps `/websites/`, WordPress Builds `/wordpress/`, Website Rede
 
 ## Calls to action
 
-- "Book a free AI consultation" → `https://offshorly.com/free-ai-consultation/` (Cal.com: `https://cal.com/offshorly/30min`)
+- "Book a free 30-minute consultation" → `https://cal.com/offshorly/30min`
 - "Tell us what you're building" → `https://offshorly.com/contact/`
