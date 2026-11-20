@@ -51,11 +51,24 @@ describe('validateOpportunities', () => {
     expect(first(r).basis[0]).toMatchObject({ kind: 'quote', quote: QUOTE.replace(/\.$/, ''), pageLabel: 'Homepage' });
   });
 
-  it('bad serviceId → free-ai-consultation', () => {
+  it('bad serviceId → ai-development-services; the consultation is never an idea service', () => {
     const r = validateOpportunities(raw([opp({ serviceId: 'hack-the-planet' })]), ctx);
-    expect(first(r).service.id).toBe('free-ai-consultation');
+    expect(first(r).service.id).toBe('ai-development-services');
     const web = validateOpportunities(raw([opp({ serviceId: 'wordpress' })]), ctx);
-    expect(first(web).service.id).toBe('free-ai-consultation');
+    expect(first(web).service.id).toBe('ai-development-services');
+    const consult = validateOpportunities(raw([opp({ serviceId: 'free-ai-consultation' })]), ctx);
+    expect(first(consult).service.id).toBe('ai-development-services');
+    expect(consult.stats!.remaps).toEqual([{ from: 'free-ai-consultation', to: 'ai-development-services' }]);
+    // A model id that isn't id-like is logged as 'invalid', never as prose.
+    const prose = validateOpportunities(raw([opp({ serviceId: 'Our team should build it' })]), ctx);
+    expect(prose.stats!.remaps).toEqual([{ from: 'invalid', to: 'ai-development-services' }]);
+  });
+
+  it('ai-product-development without a verified quote → ai-development-services', () => {
+    const r = validateOpportunities(raw([opp({ serviceId: 'ai-product-development', quotes: [], techIds: ['hubspot'] })]), ctx);
+    expect(first(r).service.id).toBe('ai-development-services');
+    const ok = validateOpportunities(raw([opp({ serviceId: 'ai-product-development' })]), ctx);
+    expect(first(ok).service.id).toBe('ai-product-development');
   });
 
   it('ignores URLs from the model', () => {
@@ -121,7 +134,7 @@ describe('validateOpportunities', () => {
 
   it('saas-enhancer with only 1 stack basis remapped; 2 kept', () => {
     const one = validateOpportunities(raw([opp({ serviceId: 'ai-saas-enhancer', techIds: ['hubspot'] })]), ctx);
-    expect(first(one).service.id).toBe('free-ai-consultation');
+    expect(first(one).service.id).toBe('ai-automation');
     const two = validateOpportunities(raw([opp({ serviceId: 'ai-saas-enhancer', techIds: ['hubspot', 'zendesk'] })]), ctx);
     expect(first(two).service.id).toBe('ai-saas-enhancer');
   });
@@ -158,7 +171,7 @@ describe('validateOpportunities', () => {
     expect(words(r.ai!.business.summary)).toBeLessThanOrEqual(30);
   });
 
-  it('keeps at most 3, likely first', () => {
+  it('keeps at most 3 site ideas, likely first', () => {
     const r = validateOpportunities(
       raw([
         opp({ title: 'One', confidence: 'worth-checking' }),
@@ -292,11 +305,11 @@ describe('opportunities honesty filters (model prose only)', () => {
 describe('runOpportunities', () => {
   it('calls once with the schema and validates the result', async () => {
     const { call, requests } = fakeCall(raw([opp()]));
-    const r = await runOpportunities({ pages: PAGES, cms: { platform: 'wordpress' }, stack: STACK, saasCount: 2 }, { call });
+    const r = await runOpportunities({ pages: PAGES, cms: { platform: 'wordpress' }, stack: STACK, saasCount: 2 }, { call, log: () => undefined });
     expect(requests).toHaveLength(1);
     expect(requests[0]!.label).toBe('opportunities');
-    expect(requests[0]!.maxTokens).toBe(2500);
-    expect(requests[0]!.timeoutMs).toBe(45_000);
+    expect(requests[0]!.maxTokens).toBe(4000);
+    expect(requests[0]!.timeoutMs).toBe(60_000);
     expect(r.status).toBe('ok');
   });
 });

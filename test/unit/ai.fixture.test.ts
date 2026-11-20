@@ -31,12 +31,13 @@ describe('fixture opportunities', () => {
     const r = fixtureOpportunities(input);
     const again = validateOpportunities(
       {
-        business: r.ai!.business,
+        business: { ...r.ai!.business, industryId: r.ai!.industry?.id, industryLabel: r.ai!.industry?.label },
         notWorthIt: r.ai!.notWorthIt,
         opportunities: r.ai!.opportunities.map((o) => ({
           ...o,
           quotes: o.basis.filter((b) => b.kind === 'quote').map((b) => (b.kind === 'quote' ? b.quote : '')),
           techIds: o.basis.filter((b) => b.kind === 'stack').map((b) => (b.kind === 'stack' ? b.techId : '')),
+          patternId: o.basis.find((b) => b.kind === 'industry')?.patternId ?? null,
           usesAnswer: false,
           serviceId: o.service.id,
           proofId: o.proof?.id ?? null,
@@ -51,10 +52,21 @@ describe('fixture opportunities', () => {
     expect(fixtureOpportunities(input)).toEqual(fixtureOpportunities(input));
   });
 
-  it('no evidence at all → insufficient', () => {
+  it('no site evidence → site ideas dropped, the generic industry idea stays', () => {
     const r = fixtureOpportunities({ ...input, pages: [{ ...PAGES[0]!, text: 'Tiny.' }], stack: [] });
-    expect(r.status).toBe('insufficient');
     expect(r.fixture).toBe(true);
+    expect(r.ai!.opportunities.map((o) => o.source)).toEqual(['industry']);
+    expect(r.ai!.industry).toEqual({ id: 'other', label: '[Sample] general business', inferred: true });
+  });
+
+  it('has one industry idea from the playbook, server text, worth checking, never the consultation', () => {
+    const r = fixtureOpportunities({ ...input, industry: 'legal' });
+    const ind = r.ai!.opportunities.filter((o) => o.source === 'industry');
+    expect(ind).toHaveLength(1);
+    expect(ind[0]!.confidence).toBe('worth-checking');
+    expect(ind[0]!.basis[0]).toMatchObject({ kind: 'industry', patternId: 'legal.intake', industryLabel: 'Legal' });
+    expect(r.ai!.industry).toEqual({ id: 'legal', label: 'Legal', inferred: false });
+    expect(r.ai!.opportunities.some((o) => o.service.id === 'free-ai-consultation')).toBe(false);
   });
 });
 

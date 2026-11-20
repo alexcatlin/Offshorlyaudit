@@ -160,6 +160,13 @@ export const appConfig = (over: Partial<AppConfig> = {}): AppConfig => ({
   emailHashSecret: 'test-secret-0123456789abcdef',
   auditAllowlist: allowlist('@offshorly.com'),
   crmSyncAllowlisted: false,
+  sessionTtlHours: 24,
+  adminToken: null,
+  shareLinks: 'on',
+  shareRetentionDays: 30,
+  shareMaxFiles: 5000,
+  mailDailyMax: 90,
+  mailFooterLine: 'Offshorly Ltd',
   ...over,
 });
 

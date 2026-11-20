@@ -12,8 +12,10 @@ import type {
   Lvl,
   Owner,
   Status,
+  IndustryId,
   TeamSize,
 } from '../../shared/types.js';
+import { INDUSTRIES, INDUSTRY_IDS } from '../../shared/industries.js';
 import { CTA } from '../../shared/services.js';
 
 export interface LoadingStage {
@@ -37,25 +39,21 @@ export const TEAM_SIZE_OPTIONS: readonly { value: TeamSize; label: string }[] = 
   { value: '200+', label: 'More than 200 people' },
 ];
 
-/** Suggestions for the business-type field (guide §6.1). Free text is still accepted. */
-export const BUSINESS_TYPE_SUGGESTIONS: readonly string[] = [
-  'Technology Agency',
-  'Creative Agency',
-  'Marketing Agency',
-  'Brand Agency',
-  'CRO Agency',
-  'Full Service Agency',
-  'Digital Agency',
-  'PR Agency',
-  'UX/Design Agency',
-  'Architectural Firm',
-  'Law Firm',
-  'Consultancy',
+/** Staged messages while the AI tab is pending (Amendment 4 §7). */
+export const AI_LOADING_STAGES: readonly LoadingStage[] = [
+  { afterSec: 0, text: 'Reading what your business does' },
+  { afterSec: 8, text: 'Matching common automations in your industry' },
+  { afterSec: 20, text: 'Checking every quote against your pages' },
 ];
 
-/** "See example" fills these into the buyer fields. */
+/** Options for the industry select, in playbook order. The blank option is "not sure". */
+export const INDUSTRY_OPTIONS: readonly { value: IndustryId; label: string }[] = INDUSTRY_IDS.map((id) => ({
+  value: id,
+  label: INDUSTRIES[id].label,
+}));
+
+/** "See example" fills these into the buyer fields (the visitor's own business type is separate). */
 export const EXAMPLE_BUYER = {
-  businessType: 'Technology Agency',
   role: 'Founder',
   size: '10–50 person software company',
   sector: 'B2B SaaS',
@@ -109,6 +107,32 @@ export const OWNER_LABELS: Record<Owner, string> = {
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** Report actions row: Save as PDF, Copy link, and (Phase 4) email (Amendment 5). */
+const ACTIONS = {
+  pdf: 'Save as PDF',
+  pdfHint: "Choose 'Save as PDF' as the printer.",
+  waiting: 'Ready when the AI ideas finish.',
+  printOrphan: "Open this page from the report's Save as PDF button.",
+  copyLink: 'Copy link',
+  linkCopied: (date: string) => `Link copied. Anyone with it can view this report, including your answers, until ${date}.`,
+  /** Clipboard refused (e.g. inside an iframe): the URL is shown selected instead. */
+  linkReady: (date: string) => `Copy this link. Anyone with it can view this report, including your answers, until ${date}.`,
+  linkLabel: 'Link to this report',
+  deleteLink: 'Delete link',
+  linkDeleted: 'Link deleted.',
+  sessionExpired:
+    "This report is no longer held on our server, so it can't be shared or emailed. Run the audit again with the same site and email to share it.",
+  shareUnavailable: "Sharing isn't available right now. Please try again later.",
+  // Phase 4: email the report (shown only when features.email is true).
+  email: 'Email me this report',
+  emailConfirm: (masked: string) => `We'll email a link to this report to ${masked}. We only send to the address you entered.`,
+  emailSend: 'Send',
+  emailCancel: 'Cancel',
+  emailSent: 'Sent. It should arrive in a minute or two; check your spam folder if not.',
+  emailFailed: "We couldn't send the email just now. Copy the link instead.",
+  emailAlready: "We've already emailed this report.",
+} as const;
+
 /**
  * Friendly error text per API error code. `serverError` is the server's own `error`
  * string, used where the wording builds on it (guide §6.1).
@@ -132,6 +156,11 @@ export const ERROR_COPY: Record<ErrorCode, (serverError: string, retryAfterSec?:
   email_invalid: () => "We couldn't confirm that email address can receive email. Please check it and try again.",
   email_used: () =>
     "This email has already been used for a free audit. Want to go further? Book a free 30-minute call and we'll walk through your site and where AI could help.",
+  session_expired: () => ACTIONS.sessionExpired,
+  not_ready: () => ACTIONS.waiting,
+  already_sent: () => ACTIONS.emailAlready,
+  share_unavailable: () => ACTIONS.shareUnavailable,
+  email_failed: () => ACTIONS.emailFailed,
 };
 
 export const COPY = {
@@ -147,25 +176,30 @@ export const COPY = {
     urlRequired: 'Please enter your website address.',
     urlInvalid: "That doesn't look like a website address. Please check it and try again.",
     optional: 'Optional',
+    industryLabel: 'Your industry',
+    industryNotSure: 'Not sure – work it out from my site',
+    industryHelp: 'Helps us match automations that are common in businesses like yours.',
+    businessToggle: 'More about your business',
+    businessHelp: 'A few quick answers make the AI ideas more specific to how your team works.',
     buyerToggle: 'Who are you trying to win?',
     buyerHelp:
       "Describe the buyer you want to attract and we'll show you what they see. Leave it blank and we'll work out who your site appears to be aimed at.",
     seeExample: 'See example',
     clearExample: 'Clear',
     businessTypeLabel: 'What kind of business are you?',
-    businessTypePlaceholder: 'For example: Law Firm',
-    businessTypeHelp: 'Type anything. The AI works out the right criteria for your type of business.',
-    roleLabel: 'Their role',
+    businessTypePlaceholder: 'For example: family law firm',
+    businessTypeHelp: 'In your own words. We use it for the AI ideas and to judge your site from your buyer’s point of view.',
+    roleLabel: 'Buyer’s role',
     rolePlaceholder: 'For example: Founder',
-    sizeLabel: 'Their company size',
+    sizeLabel: 'Buyer’s company size',
     sizePlaceholder: 'For example: 20-person agency',
-    sectorLabel: 'Their sector',
+    sectorLabel: 'Buyer’s sector (theirs, not yours)',
     sectorPlaceholder: 'For example: B2B SaaS',
-    triggerLabel: "Why they're looking now",
+    triggerLabel: 'Why the buyer is looking now',
     triggerPlaceholder: 'For example: outgrown freelancers',
-    detailToggle: 'Add detail for AI ideas',
-    detailHelp: 'Two quick answers make the AI ideas more specific to how your team works.',
     timeSinkCount: (used: number, max: number) => `${used} of ${max} characters`,
+    toolsLabel: 'Which tools does your team use day to day?',
+    toolsPlaceholder: 'For example: spreadsheets, a CRM, an accounts package, shared inbox',
     teamSizeLabel: 'How big is your team?',
     teamSizePlaceholder: 'Choose a size',
     timeSinkLabel: "What eats most of your team's week?",
@@ -179,11 +213,11 @@ export const COPY = {
     namePlaceholder: 'For example: Sam Taylor',
     /** Under the email/name row; followed by the privacy policy link. */
     leadNotice:
-      "We'll add your email, the site you audit and its results to Offshorly's CRM so we can follow up about this audit. One free audit per email.",
+      "We'll add your email, the site you audit, your answers and its results to Offshorly's CRM so we can follow up about this audit. One free audit per email.",
     marketingOptIn: 'Email me occasional ideas and offers from Offshorly. You can unsubscribe at any time.',
     submit: 'Run the audit',
     privacyNotice:
-      "We read the public pages of the site you enter and use Anthropic's Claude to analyse them. Your email is never sent to Anthropic.",
+      "We read the public pages of the site you enter and use Anthropic's Claude to analyse them, with any answers you add. Your email is never sent to Anthropic.",
     privacyLinkLabel: 'Privacy policy',
     emailUsedContact: "Or tell us what you're building",
   },
@@ -275,6 +309,15 @@ export const COPY = {
     howAiCouldHelp: 'How AI could help',
     likelyBenefit: 'Likely benefit',
     measureFirst: 'Measure first',
+    inYourIndustry: 'In your industry',
+    industryBadgeInferred: 'inferred from your site',
+    siteGroupHeading: 'From what we read on your site',
+    /** With no label (the generic fallback industry), a heading that names no industry. */
+    industryGroupHeading: (label?: string) => (label ? `Common in your industry: ${label}` : 'Common in businesses like yours'),
+    industryGroupIntro: 'Common ways businesses like yours use AI. Not checked against your site.',
+    /** Same wording as the group heading; no label (the generic fallback) names no industry. */
+    basisIndustry: (label?: string) => (label ? `Common in your industry: ${label}` : 'Common in businesses like yours'),
+    basisTools: (tools: string) => `Your tools: ${tools}`,
     basisQuote: 'From your website',
     basisAnswer: 'From your answer',
     basisStack: 'From the tools your site uses',
@@ -304,6 +347,12 @@ export const COPY = {
     unavailable:
       "AI ideas aren't available right now. Security and website health below are still measured. Please try again later for AI ideas.",
     fixtureBanner: 'Sample AI output for development, not an analysis of this site',
+    // Phase 5: examples from an industry web search.
+    /** `phrase` is the in-sentence form (industryPhrase), e.g. "software and SaaS". */
+    examplesHeading: (phrase?: string) => (phrase ? `What others in ${phrase} are doing` : 'What others in your industry are doing'),
+    examplesIntro: (date: string) => `From a web search on ${date}. Third-party sources we haven't checked: follow the links to read them.`,
+    examplesSource: 'Source:',
+    basisSource: 'Seen elsewhere',
   },
 
   fixFirst: {
@@ -384,6 +433,9 @@ export const COPY = {
   whatWeRead: {
     heading: 'What we read',
     summary: (n: number) => `${n} ${n === 1 ? 'page' : 'pages'} from your public website`,
+    /** Phase 5: only when web-search results were used for this report. */
+    /** `phrase` is the in-sentence form (industryPhrase), e.g. "construction and trades". */
+    searched: (phrase: string) => `We also searched the web for examples from ${phrase}. Nothing about you or your site was sent.`,
   },
 
   attributionsHeading: 'Data sources',
@@ -405,8 +457,14 @@ export const COPY = {
     whatWeRead: 'What we read',
     disclaimer:
       'Passive checks only: we look at what your site shows any visitor. This is not a penetration test.',
+    /** When sharing is off. */
     privacy:
-      "We don't save reports or create share links. We keep your email, the site you audited and a summary of the results in our CRM to follow up. Results are otherwise held briefly in memory. The text of the pages we read is sent to Anthropic's Claude for analysis.",
+      "We don't save reports or create share links. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Results are otherwise held briefly in memory. If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached. The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.",
+    /** When sharing is on (Amendment 5). */
+    privacyShare: (days: number) =>
+      `We only save a report if you share or email it. A saved report has no email address attached, can be seen by anyone with its link, is hidden from search engines, and is deleted after ${days} days or as soon as you delete the link. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Otherwise results are held briefly in memory. If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached. The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.`,
+    /** Appended to the privacy text when report email is on (Phase 4). */
+    privacyEmail: 'If you ask us to email the report, we send it to the address you entered through our email provider, Resend.',
     newAudit: 'Run another audit',
   },
 
@@ -427,5 +485,30 @@ export const COPY = {
 
   standalone: {
     footer: 'Offshorly Ltd. UK-led AI development company.',
+  },
+
+  actions: ACTIONS,
+
+  feedback: {
+    question: 'Was this idea useful?',
+    up: 'Useful',
+    down: 'Not useful',
+    thanks: 'Thanks for telling us.',
+  },
+
+  shared: {
+    banner: (domain: string, created: string, expires: string) =>
+      `Shared report for ${domain}, created ${created}. This link stops working on ${expires}.`,
+    disclaimer: (domain: string, date: string) =>
+      `Generated automatically from the public pages of ${domain} on ${date}. Quotes are that site's own words, and the site may have changed since.`,
+    expired: 'This report link has expired or been deleted.',
+    cta: 'Run a free audit of your own site',
+    loading: 'Loading the shared report…',
+  },
+
+  print: {
+    header: (domain: string, date: string) => `Website audit for ${domain} · ${date} · Offshorly`,
+    websiteHeading: 'Website audit',
+    aiHeading: 'AI opportunities',
   },
 } as const;

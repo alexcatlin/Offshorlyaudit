@@ -1,31 +1,19 @@
 // Buyer fit step 2 (BUILD_GUIDE §5.5): the scored "secret shopper" audit.
 import type { FetchedPage } from '../../site/types.js';
-import type { CallJson, JsonSchema } from '../client.js';
+import type { CallJson, JsonSchema, UsageSink } from '../client.js';
 import { dataRule, fence, fencePages, sanitiseData, type Boundary } from '../prompt.js';
 import type { Step1Result } from './step1.js';
 
 export const STEP2_TIMEOUT_MS = 45_000;
 export const STEP2_MAX_TOKENS = 4_000;
 
+// Property order matters: structured output generates in this order, so the criteria and
+// mismatches are written before the strengths and verdict that summarise them (Amendment 4).
 export const STEP2_SCHEMA: JsonSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['verdict', 'strengths', 'criteria', 'mismatchIndex', 'actions'],
+  required: ['criteria', 'mismatchIndex', 'strengths', 'verdict', 'actions'],
   properties: {
-    verdict: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['summary', 'brutalTruth'],
-      properties: {
-        summary: { type: 'string', description: 'One-sentence first impression.' },
-        brutalTruth: { type: 'string', description: 'The single biggest reason a client would bounce.' },
-      },
-    },
-    strengths: {
-      type: 'array',
-      items: { type: 'string' },
-      description: '2-3 things genuinely done well for this buyer; one specific sentence each; no flattery.',
-    },
     criteria: {
       type: 'array',
       description: 'Exactly one per evaluation criterion, in the same order.',
@@ -70,6 +58,20 @@ export const STEP2_SCHEMA: JsonSchema = {
         additionalProperties: false,
         required: ['point', 'explanation'],
         properties: { point: { type: 'string' }, explanation: { type: 'string' } },
+      },
+    },
+    strengths: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '2-3 things genuinely done well for this buyer; one specific sentence each; no flattery.',
+    },
+    verdict: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['summary', 'brutalTruth'],
+      properties: {
+        summary: { type: 'string', description: 'One-sentence first impression.' },
+        brutalTruth: { type: 'string', description: 'The single biggest reason a client would bounce.' },
       },
     },
     actions: {
@@ -125,6 +127,8 @@ export const buildStep2Prompt = ({ pages, framework }: Step2Input, boundary: Bou
       '- Never output URLs or HTML.',
       "- Do not comment on the site's security.",
       '- Do not invent figures (money, percentages, multiples or durations). Only repeat a figure that appears in the page text.',
+      '- Strengths, criteria reasoning and mismatches must agree; do not call something present in one place and missing in another.',
+      '- Call something missing only if it is absent from every page provided.',
     ].join('\n'),
     [
       'SCORING SCALE (use the same scale for every criterion, whatever its weight):',
@@ -186,7 +190,7 @@ export const acceptStep2 = (data: Record<string, unknown>): boolean =>
 
 export const runStep2 = async (
   input: Step2Input,
-  deps: { call: CallJson; boundary: Boundary; logMeta?: Record<string, string> },
+  deps: { call: CallJson; boundary: Boundary; logMeta?: Record<string, string>; onUsage?: UsageSink },
 ): Promise<Record<string, unknown>> => {
   const { system, user } = buildStep2Prompt(input, deps.boundary);
   const res = await deps.call({
@@ -198,6 +202,7 @@ export const runStep2 = async (
     label: 'buyerFit.step2',
     accept: acceptStep2,
     ...(deps.logMeta ? { logMeta: deps.logMeta } : {}),
+    ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
   });
   return res.data;
 };

@@ -115,7 +115,8 @@ describe('service catalogue and proofs', () => {
   });
 
   it('uses https CTA links', () => {
-    for (const c of Object.values(CTA)) expect(c.url).toMatch(/^https:\/\//);
+    // auditPage defaults to the tool's own origin ("/") until the owner names a page (Amendment 5).
+    for (const [k, c] of Object.entries(CTA)) expect(c.url, k).toMatch(k === 'auditPage' ? /^(\/|https:\/\/)/ : /^https:\/\//);
   });
 });
 

@@ -2018,6 +2018,35 @@ button {
   flex: 1 1 200px;
 }
 
+/* Amendment 4: site ideas and industry ideas in two groups. */
+.oa-opp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.oa-opp-group__heading {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.oa-opp-group__intro {
+  font-size: 14px;
+  color: var(--oa-muted-strong);
+}
+
+/* Industry ideas aren't checked against the site: a quieter, purple-only accent. */
+.oa-opp--industry::before {
+  background: var(--oa-purple);
+  opacity: 0.5;
+}
+
+.oa-business__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .oa-opp__grid {
   margin: 0;
   display: flex;
@@ -2166,4 +2195,282 @@ button {
 .oa-app--embed .oa-report {
   padding-left: 0;
   padding-right: 0;
+}
+
+/* ---------- Report actions, idea feedback, shared pages (Amendment 5) ---------- */
+
+.oa-button--small {
+  font-size: 14px;
+  padding: 6px 12px;
+}
+
+.oa-button:disabled,
+.oa-button:disabled:hover {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+  border-color: var(--oa-outline-border);
+}
+
+.oa-actions {
+  margin-top: 12px;
+}
+
+.oa-actions__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.oa-actions__hint {
+  color: var(--oa-muted-strong);
+  font-size: 13px;
+}
+
+.oa-actions__share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.oa-actions__url {
+  flex: 1 1 260px;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 10px;
+  border: 1px solid var(--oa-card-border);
+  border-radius: 6px;
+  background: var(--oa-white);
+  color: var(--oa-dark);
+}
+
+.oa-actions__delete {
+  font-size: 14px;
+  text-decoration: underline;
+}
+
+.oa-actions__status {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--oa-muted-strong);
+}
+
+.oa-actions__status:empty {
+  margin: 0;
+}
+
+/* Phase 4: inline confirm for "Email me this report". */
+.oa-actions__email {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.oa-actions__email-text {
+  margin: 0;
+  flex: 1 1 260px;
+}
+
+/* Phase 5: "What others in {industry} are doing" (third-party web-search examples). */
+.oa-examples__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.oa-example {
+  border: 1px solid var(--oa-card-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--oa-white);
+}
+
+.oa-example__text {
+  margin: 0 0 6px;
+}
+
+.oa-example__sources {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oa-muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.oa-example__label {
+  font-weight: 600;
+}
+
+.oa-searched {
+  margin: 10px 0 0;
+}
+
+.oa-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--oa-card-border);
+  font-size: 13px;
+}
+
+.oa-feedback__question {
+  color: var(--oa-muted-strong);
+  margin-right: 4px;
+}
+
+.oa-feedback__button {
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 10px;
+  border: 1px solid var(--oa-outline-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--oa-dark);
+  cursor: pointer;
+}
+
+.oa-feedback__button:hover {
+  border-color: var(--oa-purple);
+}
+
+.oa-feedback__button[aria-pressed='true'] {
+  background: var(--oa-dark);
+  border-color: var(--oa-dark);
+  color: var(--oa-white);
+}
+
+.oa-feedback__note {
+  color: var(--oa-muted-strong);
+}
+
+.oa-shared-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--oa-card-border);
+  border-radius: var(--oa-radius-card);
+  background: var(--oa-white);
+  font-size: 14px;
+}
+
+.oa-shared-banner p {
+  margin: 0;
+}
+
+.oa-shared-banner__disclaimer {
+  color: var(--oa-muted-strong);
+}
+
+.oa-shared-expired {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.oa-print-section__heading {
+  margin: 28px 0 12px;
+}
+
+.oa-print-orphan {
+  padding: 24px 0;
+}
+
+/* ---------- Print / Save as PDF ---------- */
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body,
+  .oa-app {
+    background: #fff !important;
+  }
+
+  .oa-site-header,
+  .oa-site-footer,
+  .oa-tabs,
+  .oa-actions,
+  .oa-feedback,
+  .oa-restart,
+  .oa-skeleton,
+  .oa-spinner,
+  .oa-collapsible__toggle,
+  button:not(.oa-collapsible__header) {
+    display: none !important;
+  }
+
+  /* In-place printing of a tabbed report: both panels, every section open. */
+  .oa-panel[hidden],
+  .oa-collapsible__body [hidden],
+  .oa-collapsible__body[hidden] {
+    display: block !important;
+  }
+
+  .oa-card,
+  .oa-opp,
+  .oa-example,
+  .oa-tile,
+  .oa-verdict,
+  .oa-cta,
+  .oa-collapsible,
+  .oa-fixfirst li,
+  .oa-shared-banner {
+    break-inside: avoid;
+  }
+
+  .oa-ring,
+  .oa-verdict,
+  .oa-tile,
+  .oa-cta,
+  .oa-pill,
+  .oa-badge {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .oa-collapsible__header {
+    cursor: default;
+    pointer-events: none;
+  }
+
+  /* Links print their address after the text (service, CTA, proof and source links). */
+  .oa-opp__service a[href^='http']::after,
+  .oa-proof__link[href^='http']::after,
+  .oa-cta a[href^='http']::after,
+  .oa-basis__link[href^='http']::after,
+  .oa-source-link[href^='http']::after,
+  .oa-page-chip__url[href^='http']::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+    word-break: break-all;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  .oa-cta__buttons a {
+    border: 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    color: inherit !important;
+    display: block;
+  }
 }

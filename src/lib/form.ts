@@ -1,8 +1,11 @@
 // Form helpers: URL normalisation and request building. Pure.
-import type { AuditStartBody, Persona, TeamSize } from '../../shared/types.js';
+import { isIndustryId } from '../../shared/industries.js';
+import type { AuditStartBody, IndustryId, Persona, TeamSize } from '../../shared/types.js';
 
 export interface FormValues {
   url: string;
+  /** '' = "Not sure": the AI works it out from the site. */
+  industry: IndustryId | '';
   businessType: string;
   role: string;
   size: string;
@@ -10,6 +13,7 @@ export interface FormValues {
   trigger: string;
   teamSize: TeamSize | '';
   timeSink: string;
+  tools: string;
   email: string;
   name: string;
   marketingOptIn: boolean;
@@ -17,6 +21,7 @@ export interface FormValues {
 
 export const EMPTY_FORM: FormValues = {
   url: '',
+  industry: '',
   businessType: '',
   role: '',
   size: '',
@@ -24,6 +29,7 @@ export const EMPTY_FORM: FormValues = {
   trigger: '',
   teamSize: '',
   timeSink: '',
+  tools: '',
   email: '',
   name: '',
   marketingOptIn: false,
@@ -37,6 +43,7 @@ export const LIMITS = {
   sector: 200,
   trigger: 300,
   timeSink: 200,
+  tools: 150,
   email: 254,
   name: 100,
 } as const;
@@ -85,6 +92,7 @@ export const buildRequest = (values: FormValues, url: string): AuditStartBody =>
   const name = clip(values.name, LIMITS.name);
   if (name) req.name = name;
   if (values.marketingOptIn === true) req.marketingOptIn = true;
+  if (values.industry && isIndustryId(values.industry)) req.industry = values.industry;
   const businessType = clip(values.businessType, LIMITS.businessType);
   if (businessType) req.businessType = businessType;
 
@@ -98,5 +106,7 @@ export const buildRequest = (values: FormValues, url: string): AuditStartBody =>
   if (values.teamSize && TEAM_SIZES.includes(values.teamSize)) req.teamSize = values.teamSize;
   const timeSink = clip(values.timeSink, LIMITS.timeSink);
   if (timeSink) req.timeSink = timeSink;
+  const tools = clip(values.tools, LIMITS.tools);
+  if (tools) req.tools = tools;
   return req;
 };

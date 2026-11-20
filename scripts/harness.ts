@@ -1,6 +1,6 @@
 // Run one audit from the command line, without the HTTP layer (PLAN Phase 7).
 //
-//   npm run harness -- '<json body>' [--out file.json] [--read-only] [--live-smoke]
+//   npm run harness -- '<json body>' [--out file.json] [--read-only] [--live-smoke] [--raw]
 //
 // Prints the HTTP-equivalent status, seconds, statuses, section scores, fetches per host and
 // every requested path, then waits for the buyer-fit and AI promises. --read-only stops after
@@ -8,13 +8,17 @@
 //
 // --live-smoke: requires ANTHROPIC_API_KEY. Probes the model (models.retrieve), runs one live
 // audit, then prints one line per AI call attempt (label, model, stop_reason, usage, seconds)
-// and a cost estimate from the usage, using the per-token prices below.
+// and a cost estimate from the usage, using the per-token prices in server/ai/pricing.ts.
+//
+// --raw: also prints each live AI call's raw model JSON (before validation). LOCAL USE ONLY: the
+// output contains model prose about the audited site.
 import { writeFileSync } from 'node:fs';
 import { fixtureEngine, liveEngine } from '../server/audit/aiEngine.js';
 import type { AiEngine } from '../server/audit/aiEngine.js';
 import { runAudit, validateAuditRequest } from '../server/audit/runAudit.js';
 import { createAnthropic, createJsonCaller, probeModel, resolveModel } from '../server/ai/client.js';
-import type { AiUsage } from '../server/ai/client.js';
+import type { AiUsage, CallJson } from '../server/ai/client.js';
+import { usageCostUsd } from '../server/ai/pricing.js';
 import { createWordfence } from '../server/cms/wordfence.js';
 import { createWpOrgClient } from '../server/cms/wordpressOrg.js';
 import { loadConfig, loadLocalEnv } from '../server/config.js';
@@ -24,14 +28,6 @@ import type { FetchLogEntry } from '../server/site/fetchSafe.js';
 import { readSite } from '../server/site/readSite.js';
 import { DailyCounter } from '../server/http/limits.js';
 
-// Prices in USD per million tokens for the default model (Claude Sonnet 5.5), from
-// platform.claude.com/docs/en/models/overview on 2026-11-20. CHECK CURRENT PRICING before
-// relying on the estimate, and update these if AUDIT_MODEL points at another model.
-const PRICE_INPUT_PER_MTOK = 2;
-const PRICE_OUTPUT_PER_MTOK = 10; // thinking tokens are billed as output
-const PRICE_CACHE_READ_PER_MTOK = 0.1; // 5% of input on Sonnet 5.5
-const PRICE_CACHE_WRITE_PER_MTOK = 2.5; // assumed 1.25x input (5-minute cache); this app sets no cache breakpoints
-
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
 const opt = (name: string): string | null => {
@@ -40,7 +36,7 @@ const opt = (name: string): string | null => {
 };
 const bodyArg = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--out');
 if (!bodyArg) {
-  console.error(`Usage: npm run harness -- '{"url":"https://example.com"}' [--out file] [--read-only] [--live-smoke]`);
+  console.error(`Usage: npm run harness -- '{"url":"https://example.com"}' [--out file] [--read-only] [--live-smoke] [--raw]`);
   process.exit(2);
 }
 
@@ -66,12 +62,8 @@ const printLog = (log: readonly FetchLogEntry[]) => {
   }
 };
 
-const usageCost = (u: AiUsage): number =>
-  ((u.input_tokens ?? 0) * PRICE_INPUT_PER_MTOK +
-    (u.output_tokens ?? 0) * PRICE_OUTPUT_PER_MTOK +
-    (u.cache_read_input_tokens ?? 0) * PRICE_CACHE_READ_PER_MTOK +
-    (u.cache_creation_input_tokens ?? 0) * PRICE_CACHE_WRITE_PER_MTOK) /
-  1_000_000;
+/** Unknown model → NaN, printed as "?" so a missing price row is obvious. */
+const usageCost = (u: AiUsage, model: string): number => usageCostUsd(u, model) ?? Number.NaN;
 
 interface CallLine {
   label: string;
@@ -89,7 +81,7 @@ const printCalls = (calls: readonly CallLine[], events: readonly Record<string, 
   let thinkTok = 0;
   for (const c of calls) {
     const u = c.usage;
-    const cost = usageCost(u);
+    const cost = usageCost(u, c.model);
     total += cost;
     inTok += u.input_tokens ?? 0;
     outTok += u.output_tokens ?? 0;
@@ -101,7 +93,7 @@ const printCalls = (calls: readonly CallLine[], events: readonly Record<string, 
     );
   }
   for (const e of events) console.log(`  [event] ${JSON.stringify(e)}`);
-  console.log(`AI total: in=${inTok} out=${outTok} thinking=${thinkTok}  estimated cost ~$${total.toFixed(4)} per audit (prices are constants in scripts/harness.ts; check current pricing)`);
+  console.log(`AI total: in=${inTok} out=${outTok} thinking=${thinkTok}  estimated cost ~$${Number.isNaN(total) ? '? (no price row for this model)' : total.toFixed(4)} per audit (prices in server/ai/pricing.ts; check current pricing)`);
 };
 
 const main = async () => {
@@ -136,6 +128,7 @@ const main = async () => {
   }
 
   let ai: AiEngine | null = null;
+  const rawOutputs: { label: string; data: Record<string, unknown> }[] = [];
   const calls: CallLine[] = [];
   const events: Record<string, unknown>[] = [];
   if ((liveSmoke || config.aiMode === 'live') && config.anthropicApiKey) {
@@ -143,8 +136,7 @@ const main = async () => {
     const model = resolveModel(config.auditModel);
     const settings = await probeModel(anthropic, model, { log: (e) => console.log(`  [probe] ${JSON.stringify(e)}`) });
     console.log(`model: ${model}  thinking: ${settings.thinking?.type ?? 'default'}  thinkingOn: ${settings.thinkingOn}  source: ${settings.source}`);
-    ai = liveEngine(
-      createJsonCaller({
+    const caller = createJsonCaller({
         anthropic,
         model,
         settings,
@@ -162,8 +154,13 @@ const main = async () => {
             events.push(rest);
           }
         },
-      }).callJson,
-    );
+      });
+    const call: CallJson = async (req) => {
+      const res = await caller.callJson(req);
+      if (flag('--raw')) rawOutputs.push({ label: req.label, data: res.data });
+      return res;
+    };
+    ai = liveEngine(call);
   } else if (config.aiMode === 'fixture') ai = fixtureEngine();
 
   const wordfence = createWordfence(config.wordfenceApiKey ? { apiKey: config.wordfenceApiKey } : null);
@@ -206,6 +203,10 @@ const main = async () => {
     console.log(`after AI: seconds ${secs(t0)}  buyerFit=${bf?.buyerFitStatus ?? r.buyerFitStatus}${bf?.buyerFit ? ` score=${bf.buyerFit.score} criteria=${bf.buyerFit.criteria.length} actions=${bf.buyerFit.actions.length}` : ''}  ai=${aiRes?.aiStatus ?? r.aiStatus}${aiRes?.ai ? ` opportunities=${aiRes.ai.opportunities.length}` : ''}`);
     if (bf) console.log(`fixFirst (re-ranked): ${bf.fixFirst.map((f) => f.checkId ?? `buyer-fit action#${f.actionIndex}`).join(', ')}`);
     if (liveSmoke) printCalls(calls, events);
+    if (flag('--raw')) {
+      if (!rawOutputs.length) console.log('raw: no live AI calls (fixture or off mode)');
+      for (const r of rawOutputs) console.log(`raw ${r.label}:\n${JSON.stringify(r.data, null, 2)}`);
+    }
 
     const outFile = opt('--out');
     if (outFile) {

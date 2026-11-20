@@ -191,3 +191,14 @@ export const safeHref = (url: string): string | null => {
     return null;
   }
 };
+
+/**
+ * The address shown in the email confirm, e.g. "j•••@acme.com": the first character of the local
+ * part, then dots, then the domain. Client-side only; the full address is never displayed.
+ */
+export const maskEmail = (email: string): string => {
+  const e = email.trim();
+  const at = e.lastIndexOf('@');
+  if (at < 1) return '•••';
+  return `${e.slice(0, 1)}•••@${e.slice(at + 1)}`;
+};

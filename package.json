@@ -29,6 +29,7 @@
     "@preact/preset-vite": "^2.10.6",
     "@types/node": "^20.19.43",
     "concurrently": "^9.2.5",
+    "preact-render-to-string": "^6.8.3",
     "tsx": "^4.23.15",
     "typescript": "~5.9",
     "vite": "^8.3.8",

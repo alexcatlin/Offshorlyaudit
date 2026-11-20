@@ -125,3 +125,40 @@ describe('loadLocalEnv', () => {
     delete process.env.OA_TEST_ONLY_VAR;
   });
 });
+
+describe('Amendment 5 env (Phases 2–3)', () => {
+  it('defaults', () => {
+    expect(loadConfig({})).toMatchObject({
+      sessionTtlHours: 24,
+      feedbackPath: null,
+      feedbackRetentionDays: 365,
+      adminToken: null,
+      shareLinks: 'on',
+      reportsDir: null,
+      shareRetentionDays: 30,
+      shareMaxFiles: 5000,
+      shareMinFreeMb: 150,
+    });
+  });
+
+  it('parses and validates', () => {
+    const c = loadConfig({
+      SESSION_TTL_HOURS: '72',
+      FEEDBACK_PATH: '/var/data/idea-feedback.jsonl',
+      FEEDBACK_RETENTION_DAYS: '90',
+      ADMIN_TOKEN: 'x'.repeat(32),
+      SHARE_LINKS: 'OFF',
+      REPORTS_DIR: '/var/data/reports',
+      SHARE_RETENTION_DAYS: '365',
+      SHARE_MAX_FILES: '10',
+      SHARE_MIN_FREE_MB: '0',
+    });
+    expect(c).toMatchObject({ sessionTtlHours: 72, feedbackRetentionDays: 90, adminToken: 'x'.repeat(32), shareLinks: 'off', shareRetentionDays: 365, shareMaxFiles: 10, shareMinFreeMb: 0 });
+    expect(() => loadConfig({ ADMIN_TOKEN: 'short' })).toThrow(/ADMIN_TOKEN/);
+    expect(() => loadConfig({ SHARE_LINKS: 'maybe' })).toThrow(/SHARE_LINKS/);
+    expect(() => loadConfig({ SESSION_TTL_HOURS: '0' })).toThrow(/SESSION_TTL_HOURS/);
+    expect(() => loadConfig({ SESSION_TTL_HOURS: '73' })).toThrow(ConfigError);
+    expect(() => loadConfig({ SHARE_RETENTION_DAYS: '366' })).toThrow(/SHARE_RETENTION_DAYS/);
+    expect(() => loadConfig({ SHARE_MAX_FILES: 'lots' })).toThrow(/SHARE_MAX_FILES/);
+  });
+});

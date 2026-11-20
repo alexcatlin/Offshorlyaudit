@@ -13,16 +13,34 @@ import type { Clock } from './http/limits.js';
 import { createIpHasher, originAllowed, rateLimitSubject, securityHeaders, sendError } from './http/security.js';
 import type { runAudit } from './audit/runAudit.js';
 import type { CrmSync } from './crm/sync.js';
+import { MemoryFeedbackStore } from './feedback/store.js';
+import type { FeedbackStore } from './feedback/store.js';
+import { createSessionStore } from './http/sessions.js';
 import { createEmailChecker } from './lead/email.js';
 import type { MxResolver } from './lead/email.js';
 import { MemoryLedger } from './lead/ledger.js';
 import type { AuditLedger } from './lead/ledger.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import type { AuditEntry } from './routes/audit.js';
+import { registerAdminRoutes } from './routes/admin.js';
+import { registerFeedbackRoutes } from './routes/feedback.js';
+import { registerShareRoutes, ROBOTS_NONE } from './routes/share.js';
+import { MemoryReportStore } from './share/store.js';
+import type { ReportStore } from './share/store.js';
+import type { Mailer } from './mail/types.js';
+import type { Features } from '../shared/types.js';
 
 export const BODY_LIMIT = 8 * 1024;
 export const CACHE_MAX_ENTRIES = 500;
 export const RESULT_LIMIT_HOURLY = 30;
+export const FEEDBACK_LIMIT_HOURLY = 60;
+export const SHARE_WRITE_LIMIT_HOURLY = 10;
+export const SHARE_READ_LIMIT_HOURLY = 60;
+export const ADMIN_LIMIT_HOURLY = 10;
+/** POST /api/share/email per IP. */
+export const EMAIL_LIMIT_HOURLY = 5;
+/** Report emails per email key per 24 h, across sessions. */
+export const EMAIL_PER_KEY_DAILY = 3;
 
 export type AppConfig = Pick<
   Config,
@@ -43,6 +61,13 @@ export type AppConfig = Pick<
   | 'emailHashSecret'
   | 'auditAllowlist'
   | 'crmSyncAllowlisted'
+  | 'sessionTtlHours'
+  | 'adminToken'
+  | 'shareLinks'
+  | 'shareRetentionDays'
+  | 'shareMaxFiles'
+  | 'mailDailyMax'
+  | 'mailFooterLine'
 >;
 
 export interface AppDeps {
@@ -70,12 +95,41 @@ export interface AppDeps {
   buyerFitWaitMs?: number;
   /** AI analyses in flight; default AI_SLOTS_PER_AUDIT × maxConcurrentAudits. */
   aiMaxConcurrent?: number;
+  /** Idea feedback store; default in memory. */
+  feedback?: FeedbackStore;
+  /** Shared report store; undefined → in memory, null → sharing off. SHARE_LINKS=off always wins. */
+  reports?: ReportStore | null;
+  /** Test seam: how long a share waits for the AI results (15 s). */
+  snapshotWaitMs?: number;
+  /**
+   * Report email (Phase 4). Built at boot only when MAIL_* is complete; the feature is on only
+   * with a mailer, the share store and an https PUBLIC_ORIGIN.
+   */
+  mailer?: Mailer | null;
 }
 
 const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
 export const injectTypekit = (html: string, kitUrl: string | null): string =>
   html.replace('<!--TYPEKIT-->', kitUrl ? `<link rel="stylesheet" href="${escapeAttr(kitUrl)}">` : '');
+
+/**
+ * Path for the request log: query dropped, and share ids (read capabilities) replaced with
+ * ":id" wherever they appear (so "//r/<id>" and "/r/<id>/" are redacted too). A lookbehind
+ * instead of a leading "/+" keeps it linear on long runs of slashes.
+ */
+export const logPath = (url: string): string =>
+  (url.split('?')[0] ?? '')
+    .replace(/(?<=\/)r\/[A-Za-z0-9_-]{22}/g, 'r/:id')
+    .replace(/(?<=\/)api\/share\/[A-Za-z0-9_-]{22}/g, 'api/share/:id')
+    .replace(/(?<=\/)api\/admin\/share\/[A-Za-z0-9_-]{22}/g, 'api/admin/share/:id');
+
+/** index.html for /r/:id: the robots meta says noindex, nofollow, noarchive. */
+export const sharedPageHtml = (html: string): string => {
+  const meta = `<meta name="robots" content="${ROBOTS_NONE}" />`;
+  const replaced = html.replace(/<meta name="robots"[^>]*>/, meta);
+  return replaced !== html ? replaced : html.replace('<head>', `<head>${meta}`);
+};
 
 export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
   const { config } = deps;
@@ -86,7 +140,8 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
 
   // Raw IPs never reach the logs: the request serializer records a salted hash instead of
   // Fastify's default remoteAddress, and drops query strings.
-  const reqSerializer = (req: FastifyRequest) => ({ method: req.method, url: req.url.split('?')[0], ip: hashIp(req.ip) });
+  // Share ids are rewritten to ":id" (Amendment 5): a shareId is a read capability.
+  const reqSerializer = (req: FastifyRequest) => ({ method: req.method, url: logPath(req.url), ip: hashIp(req.ip) });
   let logger: FastifyServerOptions['logger'] = false;
   if (deps.logger) {
     const base = typeof deps.logger === 'object' ? deps.logger : {};
@@ -111,7 +166,12 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     hsts: true,
   });
   app.addHook('onSend', async (req, reply, payload) => {
-    reply.headers(headers);
+    // Only Referrer-Policy may be set by a route (no-referrer on /r/:id); CSP, nosniff, HSTS
+    // and Permissions-Policy are always ours.
+    for (const [k, v] of Object.entries(headers)) {
+      if (k === 'referrer-policy' && reply.hasHeader(k)) continue;
+      reply.header(k, v);
+    }
     reply.removeHeader('x-frame-options');
     if (req.url.startsWith('/api/') || req.url === '/healthz') reply.header('cache-control', 'no-store');
     return payload;
@@ -130,6 +190,18 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
 
   const ledger = deps.ledger ?? new MemoryLedger({ now });
   const crm = deps.crm ?? null;
+  const feedback = deps.feedback ?? new MemoryFeedbackStore({ now });
+  const reports: ReportStore | null =
+    config.shareLinks === 'off'
+      ? null
+      : deps.reports === undefined
+        ? new MemoryReportStore({ retentionDays: config.shareRetentionDays, maxFiles: config.shareMaxFiles, now })
+        : deps.reports;
+  const mailer = reports && deps.mailer && config.publicOrigin?.startsWith('https:') ? deps.mailer : null;
+  const research = deps.audit.research ?? null;
+  const features: Features = { share: !!reports, email: !!mailer, feedback: true, shareRetentionDays: config.shareRetentionDays };
+  const sessions = createSessionStore({ ttlMs: config.sessionTtlHours * HOUR, now });
+
   app.get('/healthz', async () => ({
     ok: true,
     aiMode: config.aiMode,
@@ -137,6 +209,10 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     version: config.version,
     ledger: ledger.kind,
     crm: !!crm,
+    feedback: feedback.kind,
+    shares: reports ? reports.kind : 'off',
+    mail: !!mailer,
+    search: !!research,
   }));
 
   // Every audit that may run at once can hold both its AI slots.
@@ -172,8 +248,56 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
       crm,
       now,
     },
+    sessions,
+    features,
     ...(deps.runAudit ? { runAudit: deps.runAudit } : {}),
   });
+
+  registerFeedbackRoutes(app, {
+    store: feedback,
+    sessions,
+    limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: FEEDBACK_LIMIT_HOURLY }], now }),
+    ipKey,
+    checkOrigin,
+    now,
+  });
+
+  if (reports) {
+    registerShareRoutes(app, {
+      store: reports,
+      sessions,
+      writeLimiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: SHARE_WRITE_LIMIT_HOURLY }], now }),
+      readLimiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: SHARE_READ_LIMIT_HOURLY }], now }),
+      ipKey,
+      checkOrigin,
+      publicOrigin: config.publicOrigin,
+      retentionDays: config.shareRetentionDays,
+      now,
+      ...(deps.snapshotWaitMs !== undefined ? { snapshotWaitMs: deps.snapshotWaitMs } : {}),
+      email: mailer
+        ? {
+            mailer,
+            secret: config.emailHashSecret,
+            limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: EMAIL_LIMIT_HOURLY }], now }),
+            perKey: new SlidingWindowLimiter({ windows: [{ ms: DAY, max: EMAIL_PER_KEY_DAILY }], now }),
+            daily: new DailyCounter(config.mailDailyMax, now),
+            footerLine: config.mailFooterLine,
+          }
+        : null,
+    });
+  }
+
+  // Admin only with a token (config enforces ≥32 characters); otherwise /api/admin/* is a 404.
+  if (config.adminToken && config.adminToken.length >= 32) {
+    registerAdminRoutes(app, {
+      token: config.adminToken,
+      feedback,
+      reports,
+      research,
+      limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: ADMIN_LIMIT_HOURLY }], now }),
+      ipKey,
+    });
+  }
 
   // ----- Static client -----
   const clientDir = deps.clientDir ?? null;
@@ -196,6 +320,23 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     app.get('/', async (_req, reply) =>
       reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').send(indexHtml),
     );
+    // Print window for "Save as PDF" (Amendment 5 Phase 1): the same app, routed client-side.
+    app.get('/print', async (_req, reply) =>
+      reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').header('x-robots-tag', 'noindex').send(indexHtml),
+    );
+    // Shared report page (Phase 3). Served for any id: the client shows the expired page on a 404.
+    // Not listed in robots.txt (that would advertise the path); noindex headers and meta instead.
+    if (reports) {
+      const sharedHtml = sharedPageHtml(indexHtml);
+      app.get('/r/:shareId', async (_req, reply) =>
+        reply
+          .type('text/html; charset=utf-8')
+          .header('cache-control', 'no-store')
+          .header('x-robots-tag', ROBOTS_NONE)
+          .header('referrer-policy', 'no-referrer')
+          .send(sharedHtml),
+      );
+    }
   }
 
   return app;

@@ -324,7 +324,7 @@ describe('GET result endpoints', () => {
     expect(bad.statusCode).toBe(403);
   });
 
-  it("'unavailable' after the 50 s and 80 s wait limits (fake timers)", async () => {
+  it("'unavailable' after the 80 s AI and 80 s buyer-fit wait limits (fake timers)", async () => {
     const c = controlledEngine(); // never resolves
     const { calls: _c, ...audit } = auditDeps(siteRoutes(), { ai: c.engine });
     app = await buildApp({ mxResolver: fakeMx, config: appConfig({ aiMode: 'live' }), audit });
@@ -345,8 +345,8 @@ describe('GET result endpoints', () => {
 
     const aiReq = app.inject({ method: 'GET', url: `/api/audit/${r.auditId}/ai`, headers: ORIGIN });
     const aiElapsed = await settle(aiReq, 1_000, 120_000);
-    expect(aiElapsed).toBeGreaterThanOrEqual(50_000);
-    expect(aiElapsed).toBeLessThan(53_000);
+    expect(aiElapsed).toBeGreaterThanOrEqual(80_000);
+    expect(aiElapsed).toBeLessThan(83_000);
     expect((await aiReq).json()).toEqual({ auditId: r.auditId, aiStatus: 'unavailable' });
 
     const bfReq = app.inject({ method: 'GET', url: `/api/audit/${r.auditId}/buyer-fit`, headers: ORIGIN });
@@ -400,7 +400,7 @@ describe('health, static files and headers', () => {
   it('GET /healthz', async () => {
     app = await buildApp(appDeps());
     const res = await app.inject({ method: 'GET', url: '/healthz' });
-    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test', ledger: 'memory', crm: false });
+    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test', ledger: 'memory', crm: false, feedback: 'memory', shares: 'memory', mail: false, search: false });
   });
 
   it('serves index.html with CSP frame-ancestors, no X-Frame-Options, and security headers', async () => {

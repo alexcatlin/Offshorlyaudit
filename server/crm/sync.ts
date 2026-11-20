@@ -8,6 +8,7 @@
 //
 // Logs: {emailHash: <12 hex>, domain, step, status}. Never the email, never a Twenty body.
 import type { AiResult, BuyerFitResult } from '../../shared/types.js';
+import type { AiCostSummary } from '../ai/pricing.js';
 import { emailDomain, logHash } from '../lead/email.js';
 import { isFreemailDomain } from '../lead/freemail.js';
 import type { AuditEntry } from '../routes/audit.js';
@@ -19,7 +20,8 @@ import type { TwentyClient } from './twenty.js';
 export type { CrmLead } from './summary.js';
 
 export interface CrmSync {
-  enqueue(lead: CrmLead, entry: AuditEntry): void;
+  /** `cacheHit`: the entry came from the audit cache, so its AI cost was paid by an earlier run. */
+  enqueue(lead: CrmLead, entry: AuditEntry, opts?: { cacheHit?: boolean }): void;
   /** Waits up to `ms` for queued jobs; resolves with the number left undone. */
   drain(ms: number): Promise<number>;
 }
@@ -75,6 +77,7 @@ const wait = <T>(p: Promise<T> | null, ms: number): Promise<T | null> => {
 interface Job {
   lead: CrmLead;
   entry: AuditEntry;
+  cacheHit: boolean;
 }
 
 class StepFailed extends Error {}
@@ -111,14 +114,23 @@ export const createCrmSync = (opts: CrmSyncOptions): CrmSync => {
     }
   };
 
-  const run = async ({ lead, entry }: Job): Promise<void> => {
+  const run = async ({ lead, entry, cacheHit }: Job): Promise<void> => {
     const report = entry.report;
     const meta = { emailHash: logHash(lead.emailHash), domain: report.domain };
-    const [buyerFit, ai] = await Promise.all([
+    const [buyerFit, ai, cost] = await Promise.all([
       wait<BuyerFitResult>(entry.buyerFit, resultWait),
       wait<AiResult>(entry.ai, resultWait),
+      // A cache hit cost nothing new: no cost line rather than the original run's cost.
+      wait<AiCostSummary>(cacheHit ? null : (entry.aiCost ?? null), resultWait),
     ]);
-    const note = buildNote({ lead, report, buyerFit, ai });
+    const note = buildNote({
+      lead,
+      report,
+      buyerFit,
+      ai,
+      ...(entry.request ? { request: entry.request } : {}),
+      costUsd: cost?.cost_usd ?? null,
+    });
 
     const companyDomain = companyDomainFor(lead.email, report.domain);
     let companyId: string | undefined;
@@ -185,7 +197,7 @@ export const createCrmSync = (opts: CrmSyncOptions): CrmSync => {
   };
 
   return {
-    enqueue(lead, entry) {
+    enqueue(lead, entry, opts) {
       const t = now();
       const k = `${lead.emailHash}|${entry.report.domain}`;
       const until = seen.get(k);
@@ -195,7 +207,7 @@ export const createCrmSync = (opts: CrmSyncOptions): CrmSync => {
       if (seen.size > DEDUPE_MAX) {
         for (const [key, exp] of seen) if (exp <= t || seen.size > DEDUPE_MAX) seen.delete(key);
       }
-      queue.push({ lead, entry });
+      queue.push({ lead, entry, cacheHit: opts?.cacheHit === true });
       if (queue.length > maxQueue) {
         const dropped = queue.shift()!;
         log('warn', 'crm queue full, dropped oldest', {

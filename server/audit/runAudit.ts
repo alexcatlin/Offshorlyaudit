@@ -7,6 +7,7 @@
 // The report returns when the measured parts finish (or the 60 s deadline passes; late parts are
 // omitted and flagged). The two AI results come back as promises that never reject.
 import { randomBytes } from 'node:crypto';
+import { isIndustryId } from '../../shared/industries.js';
 import { rankFixFirst } from '../../shared/reportLogic.js';
 import type {
   AiResult,
@@ -42,6 +43,10 @@ import { readSite } from '../site/readSite.js';
 import type { SiteRead } from '../site/readSite.js';
 import type { FetchedPage } from '../site/types.js';
 import { detectStack, publicStack } from '../stack/detect.js';
+import { createUsageTally, type AiCostSummary } from '../ai/pricing.js';
+import { EMAIL_REDACTED, redactEmails } from '../ai/text.js';
+import { guessIndustry } from '../search/classify.js';
+import type { IndustryResearch } from '../search/industryResearch.js';
 import type { AiEngine, AiReservation } from './aiEngine.js';
 
 export const READ_BUDGET_MS = 20_000;
@@ -59,10 +64,20 @@ export interface AuditDeps {
   pagespeed?: { apiKey: string; fetchImpl?: PlainFetch; timeoutMs?: number } | null;
   /** null = AI mode off. */
   ai: AiEngine | null;
+  /**
+   * Industry web search (Amendment 5 Phase 5); null/omitted = search off. Runs inside the
+   * opportunities promise (≤4 s, cache-miss only), never on the measured report's path.
+   */
+  research?: IndustryResearch | null;
   /** Takes one unit of the global daily AI-audit allowance; false = cap reached. */
   takeAiQuota?: () => boolean;
   now?: () => number;
   log?: AuditLog;
+  /**
+   * Receives the one `ai_audit_cost` line per audit (ids, token counts and cost only, never
+   * prompt text, answers or email). Default: a JSON line on stdout.
+   */
+  costLog?: (entry: { msg: 'ai_audit_cost' } & AiCostSummary & { auditId: string; domain: string }) => void;
   randomId?: () => string;
   readBudgetMs?: number;
   measuredDeadlineMs?: number;
@@ -81,11 +96,24 @@ export interface AuditRun {
   finalUrl: string;
   /** True when AI was skipped because no AI slots were free: don't cache under the URL keys. */
   aiBusy: boolean;
+  /** The validated request (answers, no email), for the CRM note. */
+  request: AuditRequest;
+  /** Resolves once both AI analyses settle with the audit's AI usage and cost; null when AI didn't run. */
+  aiCost: Promise<AiCostSummary> | null;
 }
 
 // ---------- Validation ----------
 
-export const LIMITS = { url: 500, businessType: 100, role: 200, size: 200, sector: 200, trigger: 300, timeSink: 200 } as const;
+export const LIMITS = {
+  url: 500,
+  businessType: 100,
+  role: 200,
+  size: 200,
+  sector: 200,
+  trigger: 300,
+  timeSink: 200,
+  tools: 150,
+} as const;
 const TEAM_SIZES: readonly TeamSize[] = ['1-10', '11-50', '51-200', '200+'];
 
 export type Validated = { ok: true; value: AuditRequest } | { ok: false; error: string };
@@ -98,6 +126,18 @@ const optString = (v: unknown, max: number, name: string): { ok: true; value?: s
   return t ? { ok: true, value: t } : { ok: true };
 };
 
+/**
+ * Visitor free text: as optString, then any email address removed (emails never reach a prompt).
+ * An answer left with no letters or digits beyond the placeholders is treated as blank.
+ */
+const optFreeText = (v: unknown, max: number, name: string): ReturnType<typeof optString> => {
+  const r = optString(v, max, name);
+  if (!r.ok || !r.value) return r;
+  const value = redactEmails(r.value).trim();
+  const rest = value.split(EMAIL_REDACTED).join(' ');
+  return /[\p{L}\p{N}]/u.test(rest) ? { ok: true, value } : { ok: true };
+};
+
 /** Validates and normalises a POST /api/audit body. Unknown fields are ignored. */
 export const validateAuditRequest = (body: unknown): Validated => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'Expected a JSON object.' };
@@ -107,16 +147,21 @@ export const validateAuditRequest = (body: unknown): Validated => {
   if (!url.value) return { ok: false, error: 'url is required.' };
   const out: AuditRequest = { url: url.value };
 
-  const bt = optString(b.businessType, LIMITS.businessType, 'businessType');
+  const bt = optFreeText(b.businessType, LIMITS.businessType, 'businessType');
   if (!bt.ok) return bt;
   if (bt.value) out.businessType = bt.value;
+
+  if (b.industry !== undefined && b.industry !== null && b.industry !== '') {
+    if (!isIndustryId(b.industry)) return { ok: false, error: 'industry is not a valid option.' };
+    out.industry = b.industry;
+  }
 
   if (b.persona !== undefined && b.persona !== null) {
     if (typeof b.persona !== 'object' || Array.isArray(b.persona)) return { ok: false, error: 'persona must be an object.' };
     const p = b.persona as Record<string, unknown>;
     const persona: Partial<Persona> = {};
     for (const key of ['role', 'size', 'sector', 'trigger'] as const) {
-      const r = optString(p[key], LIMITS[key], `persona.${key}`);
+      const r = optFreeText(p[key], LIMITS[key], `persona.${key}`);
       if (!r.ok) return r;
       if (r.value) persona[key] = r.value;
     }
@@ -127,9 +172,12 @@ export const validateAuditRequest = (body: unknown): Validated => {
     if (!TEAM_SIZES.includes(b.teamSize as TeamSize)) return { ok: false, error: 'teamSize is not a valid option.' };
     out.teamSize = b.teamSize as TeamSize;
   }
-  const ts = optString(b.timeSink, LIMITS.timeSink, 'timeSink');
+  const ts = optFreeText(b.timeSink, LIMITS.timeSink, 'timeSink');
   if (!ts.ok) return ts;
   if (ts.value) out.timeSink = ts.value;
+  const tools = optFreeText(b.tools, LIMITS.tools, 'tools');
+  if (!tools.ok) return tools;
+  if (tools.value) out.tools = tools.value;
   return out.url ? { ok: true, value: out } : { ok: false, error: 'url is required.' };
 };
 
@@ -138,6 +186,8 @@ export const validateAuditRequest = (body: unknown): Validated => {
 const newAuditId = (): string => randomBytes(16).toString('base64url');
 
 const noopLog: AuditLog = () => undefined;
+
+const defaultCostLog: NonNullable<AuditDeps['costLog']> = (entry) => console.info(JSON.stringify(entry));
 
 const LATE = Symbol('late');
 
@@ -229,6 +279,9 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
     }
   }
   const fixture = engine?.mode === 'fixture';
+  // Every AI call attempt (both analyses, retries included) adds its usage here.
+  const tally = createUsageTally();
+  const onUsage = tally.add;
 
   const buyerFitRaw = engine
     ? engine
@@ -237,8 +290,10 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
             pages,
             ...(request.businessType ? { businessType: request.businessType } : {}),
             ...(request.persona ? { persona: request.persona } : {}),
+            ...(request.industry ? { industry: request.industry } : {}),
           },
           logMeta,
+          onUsage,
         )
         .then(
           (bf) => ({ ok: true as const, bf }),
@@ -249,19 +304,34 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
         )
     : null;
 
+  // Phase 5: the searched industry is the visitor's choice, else a keyword guess from the pages.
+  // Queries are built from that id alone; the audited domain is passed only to drop its own pages
+  // from the results and is never sent to the provider.
+  const research = deps.research ?? null;
+  const opportunitiesRun = async (eng: AiEngine) => {
+    const found = research
+      ? await research.forAudit(request.industry ?? guessIndustry(pages), { auditedDomain: domain }).catch(() => null)
+      : null;
+    return eng.opportunities(
+      {
+        pages,
+        cms: { platform: platform.platform },
+        stack: stack.tech,
+        saasCount: stack.saasCount,
+        ...(request.teamSize ? { teamSize: request.teamSize } : {}),
+        ...(request.timeSink ? { timeSink: request.timeSink } : {}),
+        ...(request.businessType ? { businessType: request.businessType } : {}),
+        ...(request.industry ? { industry: request.industry } : {}),
+        ...(request.tools ? { tools: request.tools } : {}),
+        ...(found ? { research: found } : {}),
+      },
+      logMeta,
+      onUsage,
+    );
+  };
+
   const aiPromise: Promise<AiResult> | null = engine
-    ? engine
-        .opportunities(
-          {
-            pages,
-            cms: { platform: platform.platform },
-            stack: stack.tech,
-            saasCount: stack.saasCount,
-            ...(request.teamSize ? { teamSize: request.teamSize } : {}),
-            ...(request.timeSink ? { timeSink: request.timeSink } : {}),
-          },
-          logMeta,
-        )
+    ? opportunitiesRun(engine)
         .then(
           (r): AiResult => {
             if (r.status === 'insufficient') return { auditId, aiStatus: 'insufficient', ...(r.ai ? { ai: r.ai } : {}) };
@@ -276,6 +346,20 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
           },
         )
     : null;
+
+  // One cost line per audit, once both analyses have settled (both promises never reject).
+  const aiCost: Promise<AiCostSummary> | null =
+    buyerFitRaw && aiPromise
+      ? Promise.all([buyerFitRaw, aiPromise]).then(() => {
+          const summary = tally.summary();
+          try {
+            (deps.costLog ?? defaultCostLog)({ msg: 'ai_audit_cost', auditId, domain, ...summary });
+          } catch {
+            // Logging must never affect the audit.
+          }
+          return summary;
+        })
+      : null;
 
   // ----- Measured parts, each under the overall deadline -----
   const omitted: MeasuredPart[] = [];
@@ -370,5 +454,5 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
     ...(omitted.length ? { omitted } : {}),
   });
 
-  return { report, buyerFit: buyerFitPromise, ai: aiPromise, fetchLog: site.fetchLog, finalUrl, aiBusy };
+  return { report, buyerFit: buyerFitPromise, ai: aiPromise, fetchLog: site.fetchLog, finalUrl, aiBusy, request, aiCost };
 };

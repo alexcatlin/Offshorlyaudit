@@ -3,7 +3,7 @@
 import type { BuyerFit } from '../../shared/types.js';
 import { runBuyerFit } from '../ai/buyerFit/run.js';
 import type { BuyerFitInput } from '../ai/buyerFit/run.js';
-import type { CallJson } from '../ai/client.js';
+import type { CallJson, UsageSink } from '../ai/client.js';
 import type { Semaphore } from '../http/limits.js';
 import { fixtureBuyerFit, fixtureOpportunities } from '../ai/fixture.js';
 import { runOpportunities } from '../ai/opportunities/run.js';
@@ -11,10 +11,10 @@ import type { OpportunitiesInput, OpportunitiesResult } from '../ai/types.js';
 
 export interface AiEngine {
   mode: 'live' | 'fixture';
-  /** Throws on failure; the orchestrator maps that to 'unavailable'. */
-  buyerFit(input: BuyerFitInput, logMeta: Record<string, string>): Promise<BuyerFit>;
-  /** Throws on failure; the orchestrator maps that to 'unavailable'. */
-  opportunities(input: OpportunitiesInput, logMeta: Record<string, string>): Promise<OpportunitiesResult>;
+  /** Throws on failure; the orchestrator maps that to 'unavailable'. `onUsage` sees every call attempt. */
+  buyerFit(input: BuyerFitInput, logMeta: Record<string, string>, onUsage?: UsageSink): Promise<BuyerFit>;
+  /** Throws on failure; the orchestrator maps that to 'unavailable'. `onUsage` sees every call attempt. */
+  opportunities(input: OpportunitiesInput, logMeta: Record<string, string>, onUsage?: UsageSink): Promise<OpportunitiesResult>;
   /**
    * Present on a concurrency-limited engine: reserves the slots for one audit's two analyses
    * in one step. null = not enough free slots (the audit skips AI). Without `reserve`, the
@@ -32,8 +32,8 @@ export interface AiReservation {
 
 export const liveEngine = (call: CallJson): AiEngine => ({
   mode: 'live',
-  buyerFit: (input, logMeta) => runBuyerFit(input, { call, logMeta }),
-  opportunities: (input, logMeta) => runOpportunities(input, { call, logMeta }),
+  buyerFit: (input, logMeta, onUsage) => runBuyerFit(input, { call, logMeta, ...(onUsage ? { onUsage } : {}) }),
+  opportunities: (input, logMeta, onUsage) => runOpportunities(input, { call, logMeta, ...(onUsage ? { onUsage } : {}) }),
 });
 
 /** Thrown when an analysis runs without a slot (unreserved, or its slot already used). */
@@ -59,7 +59,8 @@ export const AI_SLOTS_PER_AUDIT = 2;
 
 /**
  * Longest an analysis may hold its slot. Above the slowest legitimate run (buyer fit: 25 s +
- * 45 s call budgets) and the 80 s buyer-fit wait, so it only fires on a hung call.
+ * 45 s call budgets; opportunities: 60 s) and the 80 s buyer-fit wait, so it only fires on a
+ * hung call.
  */
 export const AI_SLOT_HOLD_MS = 90_000;
 
@@ -75,9 +76,9 @@ export const limitAiConcurrency = (engine: AiEngine, slots: Semaphore, holdMs = 
 
   /** One-shot: runs `run` on the slot `release` and frees it on success, failure or timeout. */
   const onSlot =
-    <I, O>(release: () => void, run: (input: I, logMeta: Record<string, string>) => Promise<O>) => {
+    <I, O>(release: () => void, run: (input: I, logMeta: Record<string, string>, onUsage?: UsageSink) => Promise<O>) => {
       let used = false;
-      return async (input: I, logMeta: Record<string, string>): Promise<O> => {
+      return async (input: I, logMeta: Record<string, string>, onUsage?: UsageSink): Promise<O> => {
         if (used) throw new AiBusyError();
         used = true;
         let timer: NodeJS.Timeout | undefined;
@@ -87,7 +88,7 @@ export const limitAiConcurrency = (engine: AiEngine, slots: Semaphore, holdMs = 
         });
         try {
           // Promise.resolve().then: a synchronous throw from `run` still lands in finally.
-          const work = Promise.resolve().then(() => run(input, logMeta));
+          const work = Promise.resolve().then(() => run(input, logMeta, onUsage));
           work.catch(() => undefined); // a rejection after the timeout must not go unhandled
           return await Promise.race([work, timeout]);
         } finally {
@@ -108,8 +109,8 @@ export const limitAiConcurrency = (engine: AiEngine, slots: Semaphore, holdMs = 
       return {
         engine: {
           mode: engine.mode,
-          buyerFit: onSlot(bfRelease, (i: BuyerFitInput, m) => engine.buyerFit(i, m)),
-          opportunities: onSlot(oppRelease, (i: OpportunitiesInput, m) => engine.opportunities(i, m)),
+          buyerFit: onSlot(bfRelease, (i: BuyerFitInput, m, u) => engine.buyerFit(i, m, u)),
+          opportunities: onSlot(oppRelease, (i: OpportunitiesInput, m, u) => engine.opportunities(i, m, u)),
         },
         release: () => {
           for (const r of releases) r();
@@ -126,4 +127,5 @@ export const fixtureEngine = (): AiEngine => ({
     const { fixture: _fixture, ...result } = fixtureOpportunities(input);
     return result;
   },
+  // Fixture output makes no API calls, so there is no usage to report.
 });

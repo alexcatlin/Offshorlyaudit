@@ -254,7 +254,7 @@ describe('createJsonCaller', () => {
     expect(options[0]!.signal).toBeInstanceOf(AbortSignal);
     // Logs carry label/model/usage/stop_reason/timing only, never prompt text.
     expect(entries).toEqual([
-      { label: 'test.call', model: 'm-1', auditId: 'a1', usage: res.usage, stop_reason: 'end_turn', max_tokens: 500, ms: expect.any(Number) },
+      { label: 'test.call', model: 'm-1', auditId: 'a1', usage: res.usage, cost_usd: null, stop_reason: 'end_turn', max_tokens: 500, ms: expect.any(Number) },
     ]);
     expect(JSON.stringify(entries)).not.toMatch(/SECRET|PAGE TEXT|chasing/);
   });

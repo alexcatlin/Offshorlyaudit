@@ -1,5 +1,8 @@
 // Shared contracts between server and client. Types only: no runtime code here.
 // See docs/PLAN.md "Data shapes".
+import type { IndustryChoice, IndustryId } from './industries.js';
+
+export type { IndustryChoice, IndustryId } from './industries.js';
 
 // ---------- Ids ----------
 
@@ -121,12 +124,17 @@ export interface Persona {
 
 export interface AuditRequest {
   url: string;
-  /** ≤100; blank → inferred by the AI. */
+  /** The visitor's own business, ≤100; blank → inferred by the AI. Used by buyer fit and opportunities. */
   businessType?: string;
-  /** role/size/sector ≤200, trigger ≤300; blank fields → inferred by the AI. */
+  /** The visitor's industry from the playbook; blank / "not sure" → inferred by the AI. */
+  industry?: IndustryId;
+  /** The BUYER the site is judged against. role/size/sector ≤200, trigger ≤300; blank fields → inferred. */
   persona?: Partial<Persona>;
   teamSize?: TeamSize;
+  /** ≤200 */
   timeSink?: string;
+  /** ≤150: "Which tools does your team use day to day?" */
+  tools?: string;
 }
 
 /** Lead fields sent with POST /api/audit. Never part of AuditRequest, the cache key or any prompt. */
@@ -168,8 +176,28 @@ export interface EvidenceQuote {
 
 export type Basis =
   | ({ kind: 'quote' } & EvidenceQuote)
-  | { kind: 'answer'; field: 'timeSink' | 'teamSize' }
-  | { kind: 'stack'; techId: string; name: string };
+  | { kind: 'answer'; field: 'timeSink' | 'tools' | 'teamSize' }
+  | { kind: 'stack'; techId: string; name: string }
+  /** A playbook pattern for the business's industry: server text, not checked against the site. */
+  | { kind: 'industry'; patternId: string; industryLabel: string; text: string }
+  /** A cited web-search result (Phase 5). Server-attached; `title` absent when it failed the filters. */
+  | ({ kind: 'source' } & ExampleSource);
+
+/** A third-party web page a search result pointed to. We never fetch it. */
+export interface ExampleSource {
+  title?: string;
+  domain: string;
+  /** http(s), validated server-side. */
+  url: string;
+}
+
+/** "What others in {industry} are doing": one sentence grounded in cited search results. */
+export interface IndustryExample {
+  /** ≤30 words */
+  text: string;
+  /** 1–2, server-attached from the cited result ids. */
+  sources: ExampleSource[];
+}
 
 export type Efficiency = 'time-per-task' | 'turnaround' | 'capacity' | 'error-rate' | 'tool-costs';
 
@@ -192,33 +220,50 @@ export interface AiOpportunity {
   service: { id: ServiceId; name: string; url: string };
   /** Server-attached. */
   proof?: { id: ProofId; text: string; url: string };
+  /** 'site' = grounded in the site or answers; 'industry' = a playbook pattern. Absent in older JSON (= site). */
+  source?: 'site' | 'industry';
+  /** ≤35 words: how businesses of this type commonly handle this work. Omitted when empty. */
+  industryContext?: string;
 }
 
 export type Customers = 'b2b' | 'b2c' | 'both' | 'unclear';
 
 export interface AiSection {
   business: { summary: string; customers: Customers };
-  /** 0–3 */
+  /** The industry used for the playbook ideas. Absent in older JSON. */
+  industry?: { id: IndustryChoice; label: string; inferred: boolean };
+  /** 0–5: up to 3 site ideas first, then up to 2 industry ideas. */
   opportunities: AiOpportunity[];
   notWorthIt: string;
+  /** Phase 5: 0–3 examples from an industry web search. Absent in older JSON or without search. */
+  industryExamples?: IndustryExample[];
+  /** Phase 5: present when web-search results were given to the model for this report. */
+  research?: { industryId: IndustryId; label: string; searchedAt: string };
 }
 
 /** Raw model output, validated server-side into AiSection. Never trusted as-is. */
 export interface RawAiOutput {
-  business: { summary: string; customers: string };
+  business: { summary: string; customers: string; industryId: string; industryLabel: string };
   opportunities: {
     title: string;
+    source: 'site' | 'industry';
+    patternId: string | null;
     process: string;
     quotes: string[];
     techIds: string[];
     usesAnswer: boolean;
     aiApproach: string;
+    industryContext: string;
     efficiency: string;
     measureFirst: string;
     confidence: string;
     serviceId: string;
     proofId: string | null;
+    /** Phase 5: INDUSTRY SEARCH RESULTS ids; industry ideas only. Absent in older output. */
+    sourceIds?: string[];
   }[];
+  /** Phase 5. Absent in older output. */
+  industryExamples?: { text: string; sourceIds: string[] }[];
   notWorthIt: string;
 }
 
@@ -386,6 +431,65 @@ export interface BuyerFitResult {
   fixFirst: FixItem[];
 }
 
+// ---------- Session, feedback, sharing (Amendment 5) ----------
+
+/** What the report may offer. `email` is true only when report email is configured (Phase 4). */
+export interface Features {
+  share: boolean;
+  email: boolean;
+  feedback: boolean;
+  /** Days a shared report is kept (footer copy and the link notice). */
+  shareRetentionDays: number;
+}
+
+/**
+ * Response of POST /api/audit. `session` is per response (never cached, never in a URL) and
+ * is the only handle for share, email and feedback.
+ */
+export interface AuditStartResponse extends AuditReport {
+  session: string;
+  features: Features;
+}
+
+/** The visitor answers a saved or printed report shows (BasisItem reads them). Never lead fields. */
+export type ShareAnswers = Pick<AuditRequest, 'timeSink' | 'tools' | 'teamSize' | 'industry' | 'businessType'>;
+
+/** A saved snapshot, built server-side from the server's own AuditEntry. No email, no auditId. */
+export interface SharedReport {
+  v: 1;
+  shareId: string;
+  createdAt: string;
+  expiresAt: string;
+  report: Omit<AuditReport, 'auditId'>;
+  answers: ShareAnswers;
+}
+
+/** Response of POST /api/share */
+export interface ShareCreated {
+  shareId: string;
+  url: string;
+  expiresAt: string;
+}
+
+/** Body of POST /api/share/email (Phase 4). `email` must be the address the audit was run with. */
+export interface EmailReportBody {
+  session: string;
+  email: string;
+}
+
+/** Response of POST /api/share/email (202). */
+export interface EmailReportSent {
+  sent: true;
+  expiresAt: string;
+}
+
+/** Body of POST /api/feedback. `vote: null` clears an earlier vote. */
+export interface FeedbackBody {
+  session: string;
+  ideaIndex: number;
+  vote: 'up' | 'down' | null;
+}
+
 // ---------- Errors ----------
 
 export type ErrorCode =
@@ -400,7 +504,17 @@ export type ErrorCode =
   /** 400: missing, malformed, disposable or undeliverable email. */
   | 'email_invalid'
   /** 409: this email already had its free audit (of another site). */
-  | 'email_used';
+  | 'email_used'
+  /** 410: the per-response session is gone (restart, expiry). Share/email/feedback need a new audit. */
+  | 'session_expired'
+  /** 409: the AI results this action needs have not settled yet. */
+  | 'not_ready'
+  /** 409: this report was already emailed (Phase 4). */
+  | 'already_sent'
+  /** 503: the share store refused (off, full, low disk, snapshot too large). */
+  | 'share_unavailable'
+  /** 502: the email provider failed (Phase 4). */
+  | 'email_failed';
 
 export interface ApiError {
   code: ErrorCode;

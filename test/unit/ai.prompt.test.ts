@@ -87,12 +87,15 @@ describe('opportunities prompt', () => {
     expect(p.user).toContain('VISITOR ANSWERS: none');
   });
 
-  it('catalogue block has ids and no URLs; proof lines have no figures', () => {
+  it('catalogue block has ids and no URLs; proof lines have no figures; never the consultation', () => {
     const cat = user.slice(0, user.indexOf('DETECTED:'));
     expect(cat).toContain('ai-automation');
-    expect(cat).toContain('free-ai-consultation');
+    expect(cat).not.toContain('free-ai-consultation');
     expect(cat).not.toMatch(/https?:\/\/|offshorly\.com|\/[a-z-]+\//);
     expect(cat).not.toMatch(/\d+\s*(minutes|%|x\b)|\$\d/);
+    expect(system).not.toContain('free-ai-consultation');
+    expect(`${system}\n${user}`).not.toMatch(/thin[^\n]*consultation/i);
+    expect(user).toContain('ai-development-services: custom AI where the shape is unclear');
   });
 
   it('system prompt carries the honesty and data rules, in UK English', () => {

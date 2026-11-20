@@ -14,6 +14,11 @@ const CODE_SET: Record<ErrorCode, true> = {
   server_error: true,
   email_invalid: true,
   email_used: true,
+  session_expired: true,
+  not_ready: true,
+  already_sent: true,
+  share_unavailable: true,
+  email_failed: true,
 };
 
 export const ERROR_CODES: readonly ErrorCode[] = Object.keys(CODE_SET) as ErrorCode[];
@@ -37,8 +42,10 @@ const STATUS_FALLBACK: Record<number, ErrorCode> = {
   404: 'not_found',
   409: 'email_used',
   413: 'bad_request',
+  410: 'session_expired',
   422: 'site_unreadable',
   429: 'rate_limited',
+  502: 'email_failed',
   503: 'busy',
 };
 

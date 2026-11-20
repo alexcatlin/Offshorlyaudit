@@ -26,9 +26,11 @@
 //   (doubled, within the model's `max_tokens` ceiling). This retry is separate from the one
 //   overload / unparseable-output retry.
 //
-// Logging: `{label, model, usage, stop_reason, ms}` plus caller-supplied metadata only. Never
-// prompt text, page text or visitor answers.
+// Logging: `{label, model, usage, cost_usd, stop_reason, ms}` plus caller-supplied metadata only.
+// Never prompt text, page text or visitor answers. `cost_usd` is an estimate from ./pricing.ts
+// (null for a model with no price row).
 import Anthropic from '@anthropic-ai/sdk';
+import { usageCostUsd } from './pricing.js';
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';
 export const OUTPUT_TOOL_NAME = 'submit_result';
@@ -77,7 +79,12 @@ export interface JsonRequest {
   accept?: (data: Record<string, unknown>) => boolean;
   /** Safe log metadata (e.g. auditId, domain). Never page text or answers. */
   logMeta?: Record<string, string>;
+  /** Called with the usage of every attempt that got a response (retries included). */
+  onUsage?: UsageSink;
 }
+
+/** Receives each attempt's usage, e.g. to total an audit's cost. Must not throw (errors are ignored). */
+export type UsageSink = (usage: AiUsage, model: string) => void;
 
 export interface JsonResponse {
   data: Record<string, unknown>;
@@ -471,7 +478,21 @@ export const createJsonCaller = (opts: JsonCallerOptions): JsonCaller => {
 
       const usage = pickUsage(isPlainObject(message) ? message.usage : undefined);
       const stop = isPlainObject(message) && typeof message.stop_reason === 'string' ? message.stop_reason : null;
-      log({ ...meta, usage, stop_reason: stop, max_tokens: maxTokens, ms: Math.round(now() - started) });
+      log({
+        ...meta,
+        usage,
+        cost_usd: usageCostUsd(usage, model),
+        stop_reason: stop,
+        max_tokens: maxTokens,
+        ms: Math.round(now() - started),
+      });
+      if (req.onUsage) {
+        try {
+          req.onUsage(usage, model);
+        } catch {
+          // A tally must never break the call.
+        }
+      }
 
       if (stop === 'max_tokens') {
         const bigger = capTokens(Math.min(maxTokens * 2, settings.maxTokensCeiling ?? MAX_TOKENS_RETRY_CEILING));

@@ -1,8 +1,23 @@
 // Client for the audit API. Same-origin only.
-//   POST /api/audit                       → AuditReport (buyer fit and AI may be 'pending')
-//   GET  /api/audit/:auditId/buyer-fit    → BuyerFitResult
-//   GET  /api/audit/:auditId/ai           → AiResult
-import type { AiResult, AuditReport, AuditRequest, BuyerFitResult } from '../shared/types.js';
+//   POST   /api/audit                     → AuditStartResponse (report + session + features)
+//   GET    /api/audit/:auditId/buyer-fit  → BuyerFitResult
+//   GET    /api/audit/:auditId/ai         → AiResult
+//   POST   /api/feedback                  → 204
+//   POST   /api/share / DELETE /api/share → ShareCreated / 204
+//   GET    /api/share/:shareId            → SharedReport
+//   POST   /api/share/email               → EmailReportSent (202; Phase 4)
+// The session token only ever travels in a JSON body, never in a URL.
+import type {
+  AiResult,
+  AuditRequest,
+  AuditStartResponse,
+  BuyerFitResult,
+  EmailReportBody,
+  EmailReportSent,
+  FeedbackBody,
+  ShareCreated,
+  SharedReport,
+} from '../shared/types.js';
 import { AuditError, networkError, toAuditError } from './lib/errors.js';
 
 export interface HttpResult {
@@ -11,10 +26,12 @@ export interface HttpResult {
   retryAfter?: string | null;
 }
 
-/** Transport seam: the real fetch, or the dev mock. */
-export type Transport = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<HttpResult>;
+export type Method = 'GET' | 'POST' | 'DELETE';
 
-const TIMEOUT_MS = { POST: 90_000, GET: 100_000 } as const;
+/** Transport seam: the real fetch, or the dev mock. */
+export type Transport = (method: Method, path: string, body?: unknown) => Promise<HttpResult>;
+
+const TIMEOUT_MS: Record<Method, number> = { POST: 90_000, GET: 100_000, DELETE: 20_000 };
 
 const fetchTransport: Transport = async (method, path, body) => {
   const res = await fetch(path, {
@@ -25,10 +42,12 @@ const fetchTransport: Transport = async (method, path, body) => {
     signal: AbortSignal.timeout(TIMEOUT_MS[method]),
   });
   let parsed: unknown = null;
-  try {
-    parsed = await res.json();
-  } catch {
-    parsed = null;
+  if (res.status !== 204) {
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = null;
+    }
   }
   return { status: res.status, body: parsed, retryAfter: res.headers.get('Retry-After') };
 };
@@ -50,24 +69,48 @@ const getTransport = (): Promise<Transport> => {
   return transportPromise;
 };
 
-const call = async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> => {
+const send = async (method: Method, path: string, body?: unknown): Promise<HttpResult> => {
   const transport = await getTransport();
-  let res: HttpResult;
   try {
-    res = await transport(method, path, body);
+    return await transport(method, path, body);
   } catch {
     throw networkError();
   }
+};
+
+const call = async <T>(method: Method, path: string, body?: unknown): Promise<T> => {
+  const res = await send(method, path, body);
   if (res.status >= 200 && res.status < 300 && res.body && typeof res.body === 'object') return res.body as T;
   throw toAuditError(res.status, res.body, res.retryAfter);
 };
 
-export const startAudit = (req: AuditRequest): Promise<AuditReport> => call<AuditReport>('POST', '/api/audit', req);
+/** For 204 endpoints. */
+const callNoContent = async (method: Method, path: string, body?: unknown): Promise<void> => {
+  const res = await send(method, path, body);
+  if (res.status >= 200 && res.status < 300) return;
+  throw toAuditError(res.status, res.body, res.retryAfter);
+};
+
+export const startAudit = (req: AuditRequest): Promise<AuditStartResponse> => call<AuditStartResponse>('POST', '/api/audit', req);
 
 export const fetchBuyerFit = (auditId: string): Promise<BuyerFitResult> =>
   call<BuyerFitResult>('GET', `/api/audit/${encodeURIComponent(auditId)}/buyer-fit`);
 
 export const fetchAi = (auditId: string): Promise<AiResult> =>
   call<AiResult>('GET', `/api/audit/${encodeURIComponent(auditId)}/ai`);
+
+export const sendFeedback = (session: string, ideaIndex: number, vote: FeedbackBody['vote']): Promise<void> =>
+  callNoContent('POST', '/api/feedback', { session, ideaIndex, vote } satisfies FeedbackBody);
+
+export const createShare = (session: string): Promise<ShareCreated> => call<ShareCreated>('POST', '/api/share', { session });
+
+export const deleteShare = (session: string): Promise<void> => callNoContent('DELETE', '/api/share', { session });
+
+/** The email goes in the body (never a URL); the server sends only to the audit's own address. */
+export const emailReport = (session: string, email: string): Promise<EmailReportSent> =>
+  call<EmailReportSent>('POST', '/api/share/email', { session, email } satisfies EmailReportBody);
+
+export const fetchShared = (shareId: string): Promise<SharedReport> =>
+  call<SharedReport>('GET', `/api/share/${encodeURIComponent(shareId)}`);
 
 export { AuditError };

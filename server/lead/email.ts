@@ -15,6 +15,17 @@ export const NAME_MAX = 100;
 export const EMAIL_RE = /^(?:(?![@<>()[\],;:"])[\x21-\x7e]){1,64}@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
 /**
+ * The trimmed address when it passes the gate's syntax rule (EMAIL_RE, at most EMAIL_MAX),
+ * else null. Run this before canonicalEmail/emailKey: canonicalisation splits at the last @
+ * and drops "+tag", so an unvalidated string (a list, a display-name form, CRLF) could hash
+ * to someone else's key.
+ */
+export const validEmail = (email: string): string | null => {
+  const e = email.trim();
+  return e.length <= EMAIL_MAX && EMAIL_RE.test(e) ? e : null;
+};
+
+/**
  * Safe display name: no angle brackets or pipes, no control characters, whitespace collapsed.
  * (Kept from the old webhook route; harmless in Twenty and in logs we never write.)
  */
@@ -64,7 +75,8 @@ export const emailDomain = (email: string): string => {
 };
 
 /**
- * Canonical form, used only for the gate key and the allow-list (never for the CRM):
+ * Canonical form, used only for the gate key and the allow-list (never for the CRM).
+ * Callers must pass an address that already passed `validEmail`:
  * lowercase; strip "+tag" on every domain; for Gmail also remove dots and map
  * googlemail.com → gmail.com.
  */
@@ -201,8 +213,8 @@ export const createEmailChecker = (opts: EmailCheckerOptions = {}): EmailChecker
   const cache = new Map<string, { ok: boolean; expires: number }>();
   return {
     async check(email) {
-      const e = email.trim();
-      if (e.length > EMAIL_MAX || !EMAIL_RE.test(e)) return 'syntax';
+      const e = validEmail(email);
+      if (!e) return 'syntax';
       const domain = emailDomain(e);
       if (isDisposableDomain(domain)) return 'disposable';
       const hit = cache.get(domain);

@@ -7,6 +7,7 @@ import {
   emailKey,
   isAllowlisted,
   parseAllowlist,
+  validEmail,
 } from '../../server/lead/email.js';
 import type { MxResolver } from '../../server/lead/email.js';
 import { isFreemailDomain } from '../../server/lead/freemail.js';
@@ -24,6 +25,16 @@ describe('canonicalEmail', () => {
     expect(canonicalEmail('j.o@outlook.com')).toBe('j.o@outlook.com');
     // A leading "+" is part of the local part, not a tag.
     expect(canonicalEmail('+x@example.com')).toBe('+x@example.com');
+  });
+});
+
+describe('validEmail', () => {
+  it('returns the trimmed address only when it passes EMAIL_RE and the length cap', () => {
+    expect(validEmail('  jo+x@example.com ')).toBe('jo+x@example.com');
+    expect(validEmail('attacker+x,victim@target.com,y@evil.com')).toBeNull();
+    expect(validEmail('attacker+ <victim@target.com> @evil.com')).toBeNull();
+    expect(validEmail('a\r\n@example.com')).toBeNull();
+    expect(validEmail(`${'a'.repeat(64)}@${'b'.repeat(190)}.com`)).toBeNull();
   });
 });
 

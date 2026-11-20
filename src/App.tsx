@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { AuditReport, AuditRequest, ErrorCode } from '../shared/types.js';
-import { AuditError, fetchAi, fetchBuyerFit, startAudit } from './api.js';
+import type { AuditReport, AuditRequest, ErrorCode, Features } from '../shared/types.js';
+import { AuditError, fetchAi, fetchBuyerFit, sendFeedback, startAudit } from './api.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { Form } from './components/Form.js';
 import { Loading } from './components/Loading.js';
+import type { Vote, VoteHandler } from './components/FeedbackButtons.js';
 import { Report } from './components/Report.js';
+import { ReportActions } from './components/ReportActions.js';
 import { CTA, OFFSHORLY_ORIGIN } from '../shared/services.js';
 import { COPY } from './content/copy.js';
 import { postScrollTop } from './embed/resize.js';
 import { buildRequest, EMPTY_FORM, normaliseUrlInput, type FormValues } from './lib/form.js';
 import { markUnavailable, mergeAi, mergeBuyerFit } from './lib/report.js';
+import { browserOpenerEnv, openPrintWindow } from './lib/printBridge.js';
 import { captureScrollAnchor } from './lib/scrollAnchor.js';
+import { usePrintInPlace } from './lib/usePrintInPlace.js';
 
 type State =
   | { phase: 'form'; error: string | null; errorCode: ErrorCode | 'network' | null }
   | { phase: 'loading'; domain: string }
-  | { phase: 'report'; report: AuditReport; request: AuditRequest };
+  /** `session` and `features` sit beside the report, never inside it (Amendment 5). */
+  | { phase: 'report'; report: AuditReport; request: AuditRequest; session: string | null; features: Features | null };
 
 const domainFromUrl = (url: string): string => {
   try {
@@ -41,6 +46,16 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
   /** Bumped on every new audit, so late responses from an earlier one are ignored. */
   const generation = useRef(0);
   const restoreScroll = useRef<(() => void) | null>(null);
+  /** The current report's session, for handlers created before the latest render. */
+  const sessionRef = useRef<string | null>(null);
+  /** The session-expired text shows once per page, not on every idea. */
+  const expiredShown = useRef(false);
+  const [printing, startPrintInPlace] = usePrintInPlace();
+  /**
+   * Votes the server accepted, by idea index. In-place printing swaps the tabbed panels for the
+   * print layout and back, remounting the feedback buttons; they start from these.
+   */
+  const [votes, setVotes] = useState<Record<number, Vote>>({});
 
   useLayoutEffect(() => {
     if (restoreScroll.current) {
@@ -78,9 +93,12 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
     setState({ phase: 'loading', domain: domainFromUrl(url) });
     scrollToTop();
     try {
-      const report = await startAudit(request);
+      const { session, features, ...report } = await startAudit(request);
       if (gen !== generation.current) return;
-      setState({ phase: 'report', report, request });
+      sessionRef.current = typeof session === 'string' ? session : null;
+      expiredShown.current = false;
+      setVotes({});
+      setState({ phase: 'report', report, request, session: sessionRef.current, features: features ?? null });
       scrollToTop();
       followUp(gen, report);
     } catch (err) {
@@ -98,8 +116,34 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
     if (check.ok) void submit({ ...EMPTY_FORM, url: devAutorun.url, email: 'dev@example.com' }, check.url);
   }, []);
 
+  const onVote: VoteHandler = async (ideaIndex, vote) => {
+    const session = sessionRef.current;
+    if (!session) return 'error';
+    try {
+      await sendFeedback(session, ideaIndex, vote);
+      if (session === sessionRef.current) setVotes((v) => ({ ...v, [ideaIndex]: vote }));
+      return 'ok';
+    } catch (e) {
+      if (e instanceof AuditError && e.code === 'session_expired' && !expiredShown.current) {
+        expiredShown.current = true;
+        return 'expired';
+      }
+      return 'error';
+    }
+  };
+
+  /** Synchronous in the click handler, so the print window isn't treated as a popup. */
+  const onPdf = () => {
+    if (state.phase !== 'report') return;
+    openPrintWindow(
+      { report: state.report, request: state.request, ...(state.features ? { features: state.features } : {}) },
+      browserOpenerEnv(startPrintInPlace),
+    );
+  };
+
   const restart = () => {
     generation.current++;
+    sessionRef.current = null;
     setState({ phase: 'form', error: null, errorCode: null });
     scrollToTop();
   };
@@ -120,7 +164,28 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
         <ErrorBoundary onReset={restart}>
           {state.phase === 'form' && <Form key="form" initial={values} error={state.error} errorCode={state.errorCode} onSubmit={submit} />}
           {state.phase === 'loading' && <Loading domain={state.domain} />}
-          {state.phase === 'report' && <Report report={state.report} request={state.request} onRestart={restart} initialTab={devAutorun?.tab} />}
+          {state.phase === 'report' && (
+            <Report
+              report={state.report}
+              request={state.request}
+              mode={printing ? 'print' : 'live'}
+              onRestart={restart}
+              initialTab={devAutorun?.tab}
+              onVote={state.features?.feedback && state.session ? onVote : undefined}
+              votes={votes}
+              features={state.features}
+              actions={
+                <ReportActions
+                  report={state.report}
+                  mode="live"
+                  onPdf={onPdf}
+                  features={state.features}
+                  session={state.session}
+                  email={values.email || null}
+                />
+              }
+            />
+          )}
         </ErrorBoundary>
       </main>
       {!embedded && (

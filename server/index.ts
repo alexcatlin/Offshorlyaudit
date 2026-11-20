@@ -9,8 +9,14 @@ import type { Config } from './config.js';
 import { createCrmSync } from './crm/sync.js';
 import type { CrmLog } from './crm/sync.js';
 import { createTwentyClient } from './crm/twenty.js';
+import { createFeedbackStore } from './feedback/store.js';
 import { createLedger } from './lead/ledger.js';
 import type { LedgerLog } from './lead/ledger.js';
+import { createResendMailer } from './mail/resend.js';
+import { createFixtureSearchProvider } from './search/fixture.js';
+import { createIndustryResearch } from './search/industryResearch.js';
+import { createSerpApiProvider } from './search/serpapi.js';
+import { createReportStore } from './share/store.js';
 import { createFetchSafe } from './site/fetchSafe.js';
 
 /** Drain budget for queued CRM jobs on shutdown (the force-exit timer is 10 s). */
@@ -52,6 +58,43 @@ if (config.emailHashSecretGenerated) {
 }
 const ledgerLog: LedgerLog = (level, msg, extra) => log(level, msg, extra);
 const ledger = await createLedger(config, ledgerLog);
+// Amendment 5: idea feedback (JSONL) and shared reports (one file each), both on the disk.
+const feedback = await createFeedbackStore(config, (level, msg, extra) => log(level, msg, extra));
+const reports = await createReportStore(config, (level, msg, extra) => log(level, msg, extra));
+
+// Non-fatal configuration problems (wording only, never values).
+for (const w of config.warnings) log('warn', w);
+
+// Phase 4: report email. Built only when MAIL_* and an https PUBLIC_ORIGIN are complete; the
+// feature also needs the share store (buildApp checks). The key is never logged.
+const mailer =
+  config.mailConfigured && config.mailApiKey && config.mailFrom
+    ? createResendMailer({
+        apiKey: config.mailApiKey,
+        from: config.mailFrom,
+        replyTo: config.mailReplyTo,
+        userAgent: `offshorly-audit/${config.version}`,
+      })
+    : null;
+if (mailer && !reports) log('warn', 'Report email needs share links (SHARE_LINKS=on): report email is off');
+
+// Phase 5: industry web search. SerpApi with a key, or the dev/test fixture; otherwise off.
+const searchProvider =
+  config.searchProvider === 'serpapi' && config.searchApiKey
+    ? createSerpApiProvider({ apiKey: config.searchApiKey })
+    : config.searchProvider === 'fixture'
+      ? createFixtureSearchProvider()
+      : null;
+const research = searchProvider
+  ? await createIndustryResearch({
+      provider: searchProvider,
+      ttlDays: config.searchCacheDays,
+      dailyMax: config.searchDailyMax,
+      path: config.searchCachePath,
+      createDir: !config.isProduction,
+      log: (level, msg, extra) => log(level, msg, extra),
+    })
+  : null;
 
 const crmLog: CrmLog = (level, msg, extra) => log(level, msg, extra);
 const crm =
@@ -68,9 +111,13 @@ const app = await buildApp({
     wordfence,
     pagespeed: config.pagespeedApiKey ? { apiKey: config.pagespeedApiKey } : null,
     ai,
+    research,
   },
   ledger,
+  mailer,
   crm,
+  feedback,
+  reports,
   clientDir: resolve(process.cwd(), 'dist/client'),
   logger,
 });
@@ -90,6 +137,7 @@ const shutdown = (signal: string) => {
   app.log.info({ signal }, 'shutting down');
   wordfence?.stop();
   cancelReprobe?.();
+  reports?.close();
   const force = setTimeout(() => process.exit(1), 10_000);
   force.unref();
   Promise.all([
@@ -100,7 +148,7 @@ const shutdown = (signal: string) => {
         })
       : null,
   ])
-    .then(() => ledger.close())
+    .then(() => Promise.all([ledger.close(), feedback.close(), research?.close()]))
     .then(
       () => process.exit(0),
       () => process.exit(1),
@@ -120,6 +168,11 @@ app.log.info(
     emailGate: config.emailGate,
     ledger: ledger.kind,
     crm: crm ? 'on' : 'off',
+    feedback: feedback.kind,
+    shares: reports ? reports.kind : 'off',
+    admin: !!config.adminToken,
+    mail: !!(mailer && reports),
+    search: research ? research.provider : 'off',
   },
   'audit service ready',
 );

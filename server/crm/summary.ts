@@ -1,6 +1,7 @@
 // The CRM Note for one audit (Amendment 3 §4): title and markdown body. Pure.
+import { INDUSTRIES } from '../../shared/industries.js';
 import { CTA } from '../../shared/services.js';
-import type { AiResult, AuditReport, BuyerFitResult, CheckResult, FixItem } from '../../shared/types.js';
+import type { AiResult, AuditReport, AuditRequest, BuyerFitResult, CheckResult, FixItem } from '../../shared/types.js';
 
 export interface CrmLead {
   /** Lowercased as typed (not the canonical gate form). */
@@ -21,6 +22,10 @@ export interface NoteInput {
   report: AuditReport;
   buyerFit: BuyerFitResult | null;
   ai: AiResult | null;
+  /** The visitor's answers (validated, emails already redacted). */
+  request?: AuditRequest;
+  /** Estimated AI cost for this audit in USD; null/absent when unknown or AI didn't run. */
+  costUsd?: number | null;
 }
 
 const MAX_FIX_LINES = 5;
@@ -56,7 +61,17 @@ const fixLine = (item: FixItem, checks: Map<string, CheckResult>, bf: BuyerFitRe
 export const noteTitle = (lead: CrmLead, report: AuditReport): string =>
   `${lead.test ? '[Test] ' : ''}Website audit: ${report.domain}`;
 
-export const buildNote = ({ lead, report, buyerFit, ai }: NoteInput): { title: string; markdown: string } => {
+/** Industry line: the AI's resolved industry when it ran, else the visitor's choice. */
+const industryLine = (ai: AiResult | null, request: AuditRequest | undefined): string | null => {
+  const ind = ai?.ai?.industry;
+  if (ind) return `${line(ind.label, 60)} (${ind.inferred ? 'inferred' : 'given'})`;
+  if (request?.industry) return `${line(INDUSTRIES[request.industry].label, 60)} (given)`;
+  return null;
+};
+
+const formatUsd = (n: number): string => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+
+export const buildNote = ({ lead, report, buyerFit, ai, request, costUsd }: NoteInput): { title: string; markdown: string } => {
   const out: string[] = [];
   out.push(`**Audited URL:** ${autolink(report.url)}`);
   out.push(`**Audit date:** ${report.auditedAt.slice(0, 10)}`);
@@ -68,6 +83,15 @@ export const buildNote = ({ lead, report, buyerFit, ai }: NoteInput): { title: s
     out.push('**Buyer fit:** not run');
   }
   out.push(`**Security:** ${score(report.security.score)} · **Website health:** ${score(report.health.score)}`);
+
+  const about: string[] = [];
+  const industry = industryLine(ai, request);
+  if (industry) about.push(`**Industry:** ${industry}`);
+  if (request?.businessType) about.push(`**Business type:** ${line(request.businessType, 100)}`);
+  if (request?.teamSize) about.push(`**Team size:** ${line(request.teamSize, 20)}`);
+  if (request?.tools) about.push(`**Tools:** ${line(request.tools, 150)}`);
+  if (request?.timeSink) about.push(`**What eats the week:** ${line(request.timeSink, 200)}`);
+  if (about.length) out.push('', ...about);
 
   const checks = new Map<string, CheckResult>([...report.security.checks, ...report.health.checks].map((c) => [c.id, c]));
   const fixes = (buyerFit?.fixFirst ?? report.fixFirst)
@@ -83,7 +107,9 @@ export const buildNote = ({ lead, report, buyerFit, ai }: NoteInput): { title: s
   out.push('');
   if (!ran) out.push('**AI ideas:** not run');
   else if (!ideas.length) out.push('**AI ideas:** none found');
-  else out.push('**AI ideas**', ...ideas.map((o) => `- ${line(o.title)} (${o.service.name})`));
+  // Square brackets escaped like every other markdown character in the note.
+  else out.push('**AI ideas**', ...ideas.map((o) => `- ${line(o.title)} (${o.service.name}) ${escapeMarkdown(`[${o.source ?? 'site'}]`)}`));
+  if (typeof costUsd === 'number' && Number.isFinite(costUsd)) out.push(`AI cost (est.): ${formatUsd(costUsd)}`);
 
   out.push(
     '',

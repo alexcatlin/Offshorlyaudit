@@ -13,6 +13,9 @@
     iframe.title = 'Website and AI audit';
     iframe.loading = 'eager';
     iframe.setAttribute('scrolling', 'no');
+    // "Copy link" writes to the clipboard from inside the frame. No sandbox attribute: it would
+    // block the "Save as PDF" print window.
+    iframe.setAttribute('allow', 'clipboard-write');
     iframe.style.cssText = 'display:block;width:100%;min-height:720px;border:0;overflow:hidden;background:transparent';
     host.appendChild(iframe);
 

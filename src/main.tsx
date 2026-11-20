@@ -8,6 +8,12 @@ import './styles/tokens.css';
 import './styles/widget.css';
 import { App } from './App.js';
 import { isEmbedded, startResizeReporting } from './embed/resize.js';
+import { PrintApp } from './print/PrintApp.js';
+import { SharedApp } from './shared/SharedApp.js';
+
+/** Route on the path (Amendment 5): /print → print window, /r/:id → shared report, else the widget. */
+const path = window.location.pathname;
+const sharedMatch = /^\/r\/([A-Za-z0-9_-]{22})\/?$/.exec(path);
 
 const embedded = isEmbedded();
 document.documentElement.classList.toggle('oa-embedded', embedded);
@@ -22,6 +28,13 @@ const devAutorun =
 
 const root = document.getElementById('app');
 if (root) {
-  render(<App embedded={embedded} devAutorun={devAutorun} />, root);
-  startResizeReporting();
+  if (path === '/print') {
+    render(<PrintApp />, root);
+  } else if (path.startsWith('/r/')) {
+    // Any other /r/ path is not a valid link: SharedApp shows the expired page on its 404.
+    render(<SharedApp shareId={sharedMatch?.[1] ?? 'invalid'} />, root);
+  } else {
+    render(<App embedded={embedded} devAutorun={devAutorun} />, root);
+    startResizeReporting();
+  }
 }

@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parseAllowlist } from './lead/email.js';
+import { EMAIL_RE, parseAllowlist } from './lead/email.js';
 import type { Allowlist } from './lead/email.js';
 
 export type AiMode = 'live' | 'fixture' | 'off';
@@ -47,6 +47,46 @@ export interface Config {
   /** Twenty origin; null (or no key) = CRM off. */
   twentyApiUrl: string | null;
   twentyApiKey: string | null;
+  /** Per-response session lifetime (Amendment 5). */
+  sessionTtlHours: number;
+  /** Idea feedback JSONL on the persistent disk; null = in memory. */
+  feedbackPath: string | null;
+  feedbackRetentionDays: number;
+  /** Bearer token for /api/admin/*; null = admin routes off (404). ≥32 characters. */
+  adminToken: string | null;
+  /** 'off' = no share store; share and email are hidden. */
+  shareLinks: 'on' | 'off';
+  /** One JSON file per shared report; null = in memory. */
+  reportsDir: string | null;
+  shareRetentionDays: number;
+  shareMaxFiles: number;
+  shareMinFreeMb: number;
+  /** Amendment 5 Phase 4: 'resend' or null (email off). */
+  mailProvider: 'resend' | null;
+  mailApiKey: string | null;
+  /** Parsed From, "Name <addr>" or "addr"; null when unset or unparseable (warned). */
+  mailFrom: string | null;
+  /** Bare address; null when unset or unparseable (warned). */
+  mailReplyTo: string | null;
+  /** Report emails per UTC day across all visitors. */
+  mailDailyMax: number;
+  /** One line at the foot of the report email (registered company details). */
+  mailFooterLine: string;
+  /**
+   * Provider, key, From and an https PUBLIC_ORIGIN are all in place. The email feature also needs
+   * the share store, which is only known at boot (see server/index.ts and buildApp).
+   */
+  mailConfigured: boolean;
+  /** Amendment 5 Phase 5: 'serpapi', 'fixture' (dev/test only) or null (search off). */
+  searchProvider: 'serpapi' | 'fixture' | null;
+  searchApiKey: string | null;
+  /** Industry research cache (JSON) on the persistent disk; null = in memory. */
+  searchCachePath: string | null;
+  searchCacheDays: number;
+  /** Search provider requests per UTC day (each research run makes two). */
+  searchDailyMax: number;
+  /** Non-fatal configuration problems, logged once at boot. Never contain values. */
+  warnings: string[];
 }
 
 export class ConfigError extends Error {
@@ -96,6 +136,39 @@ const list = (env: Env, key: string): string[] | null => {
   const raw = str(env, key);
   return raw === null ? null : raw.split(/[\s,]+/).filter(Boolean);
 };
+
+/** Default footer line of the report email until MAIL_FOOTER_LINE gives the registered details. */
+export const DEFAULT_MAIL_FOOTER = 'Offshorly Ltd';
+export const MAIL_FOOTER_MAX = 200;
+const MAIL_NAME_RE = /^[^<>"\\\x00-\x1f\x7f]{1,64}$/;
+
+/**
+ * MAIL_FROM: "Name <addr@domain>" or "addr@domain". Index-based (no backtracking regex over the
+ * whole value); the address must pass the gate's EMAIL_RE. Returns the normalised form or null.
+ */
+export const parseMailFrom = (raw: string): string | null => {
+  const v = raw.trim();
+  if (v.length > 320) return null;
+  if (v.endsWith('>')) {
+    const lt = v.lastIndexOf('<');
+    if (lt < 0) return null;
+    const name = v.slice(0, lt).trim();
+    const addr = v.slice(lt + 1, -1).trim();
+    if (!EMAIL_RE.test(addr)) return null;
+    if (!name) return addr;
+    return MAIL_NAME_RE.test(name) ? `${name} <${addr}>` : null;
+  }
+  return EMAIL_RE.test(v) ? v : null;
+};
+
+/** One line, control characters and runs of whitespace collapsed, at most MAIL_FOOTER_MAX characters. */
+export const sanitiseFooterLine = (raw: string): string =>
+  raw
+    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAIL_FOOTER_MAX)
+    .trim();
 
 /** CSP host-source: scheme://host[:port] with an optional leading "*." wildcard. No quotes, semicolons or paths. */
 const FRAME_SOURCE_RE = /^https?:\/\/(\*\.)?[a-z0-9.-]+(:\d{1,5})?$/i;
@@ -175,6 +248,52 @@ export const loadConfig = (env: Env = process.env): Config => {
     }
   }
 
+  const adminToken = str(env, 'ADMIN_TOKEN');
+  if (adminToken !== null && adminToken.length < 32) throw new ConfigError('ADMIN_TOKEN must be at least 32 characters.');
+
+  const shareRaw = str(env, 'SHARE_LINKS')?.toLowerCase() ?? 'on';
+  if (shareRaw !== 'on' && shareRaw !== 'off') throw new ConfigError('SHARE_LINKS must be on or off.');
+
+  // ----- Email the report (Phase 4). Problems switch email off with a warning; never fatal. -----
+  const warnings: string[] = [];
+  const mailRaw = str(env, 'MAIL_PROVIDER')?.toLowerCase() ?? null;
+  if (mailRaw !== null && mailRaw !== 'resend') warnings.push('MAIL_PROVIDER must be resend or empty: report email is off.');
+  const mailProvider = mailRaw === 'resend' ? 'resend' : null;
+  const mailApiKey = str(env, 'MAIL_API_KEY');
+  const mailFromRaw = str(env, 'MAIL_FROM');
+  const mailFrom = mailFromRaw ? parseMailFrom(mailFromRaw) : null;
+  const replyRaw = str(env, 'MAIL_REPLY_TO');
+  const mailReplyTo = replyRaw && EMAIL_RE.test(replyRaw) ? replyRaw : null;
+  const footerRaw = str(env, 'MAIL_FOOTER_LINE');
+  const footer = footerRaw ? sanitiseFooterLine(footerRaw) : '';
+  if (footerRaw && footerRaw.trim().length > MAIL_FOOTER_MAX) warnings.push(`MAIL_FOOTER_LINE is longer than ${MAIL_FOOTER_MAX} characters and was cut.`);
+  let mailConfigured = false;
+  if (mailProvider) {
+    if (!mailApiKey) warnings.push('MAIL_PROVIDER is set but MAIL_API_KEY is empty: report email is off.');
+    else if (!mailFrom) warnings.push('MAIL_FROM is missing or not a valid "Name <address>": report email is off.');
+    else if (!publicOrigin || !publicOrigin.startsWith('https:')) {
+      warnings.push('PUBLIC_ORIGIN must be an https origin for report email: report email is off.');
+    } else mailConfigured = true;
+    if (replyRaw && !mailReplyTo) warnings.push('MAIL_REPLY_TO is not a valid address and is ignored.');
+  }
+
+  // ----- Web-search grounding (Phase 5). Problems switch search off with a warning; never fatal. -----
+  const searchRaw = str(env, 'SEARCH_PROVIDER')?.toLowerCase() ?? null;
+  const searchApiKey = str(env, 'SEARCH_API_KEY');
+  let searchProvider: Config['searchProvider'] = null;
+  if (searchRaw === 'serpapi') searchProvider = 'serpapi';
+  else if (searchRaw === 'fixture') {
+    if (isProduction) warnings.push('SEARCH_PROVIDER=fixture is not allowed in production (it feeds sample results to real reports): web search is off.');
+    else searchProvider = 'fixture';
+  } else if (searchRaw !== null) {
+    // Only SerpApi is built (its API shape was verified); a Serper adapter can follow once its docs are.
+    warnings.push('SEARCH_PROVIDER must be serpapi (or fixture outside production) or empty: web search is off.');
+  }
+  if (searchProvider === 'serpapi' && !searchApiKey) {
+    warnings.push('SEARCH_PROVIDER is set but SEARCH_API_KEY is empty: web search is off.');
+    searchProvider = null;
+  }
+
   const logLevel = str(env, 'LOG_LEVEL')?.toLowerCase() ?? 'info';
   if (!LOG_LEVELS.includes(logLevel)) throw new ConfigError(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}.`);
 
@@ -208,5 +327,30 @@ export const loadConfig = (env: Env = process.env): Config => {
     crmSyncAllowlisted: crmAllowRaw === 'true',
     twentyApiUrl,
     twentyApiKey: str(env, 'TWENTY_API_KEY'),
+    sessionTtlHours: int(env, 'SESSION_TTL_HOURS', 24, 1, 72),
+    feedbackPath: str(env, 'FEEDBACK_PATH'),
+    // Capped at a year: the footer and privacy copy promise "up to a year" (src/content/copy.ts).
+    feedbackRetentionDays: int(env, 'FEEDBACK_RETENTION_DAYS', 365, 1, 365),
+    adminToken,
+    shareLinks: shareRaw,
+    reportsDir: str(env, 'REPORTS_DIR'),
+    shareRetentionDays: int(env, 'SHARE_RETENTION_DAYS', 30, 1, 365),
+    shareMaxFiles: int(env, 'SHARE_MAX_FILES', 5000, 1, 1_000_000),
+    shareMinFreeMb: int(env, 'SHARE_MIN_FREE_MB', 150, 0, 1_000_000),
+    mailProvider,
+    mailApiKey,
+    mailFrom,
+    mailReplyTo,
+    // Resend's free tier allows 100 a day; 90 leaves headroom for manual sends.
+    mailDailyMax: int(env, 'MAIL_DAILY_MAX', 90, 0, 1_000_000),
+    mailFooterLine: footer || DEFAULT_MAIL_FOOTER,
+    mailConfigured,
+    searchProvider,
+    searchApiKey,
+    searchCachePath: str(env, 'SEARCH_CACHE_PATH'),
+    searchCacheDays: int(env, 'SEARCH_CACHE_DAYS', 7, 1, 30),
+    // SerpApi's free plan: 250 searches a month, 50 an hour. Each research run makes two.
+    searchDailyMax: int(env, 'SEARCH_DAILY_MAX', 20, 0, 100_000),
+    warnings,
   };
 };

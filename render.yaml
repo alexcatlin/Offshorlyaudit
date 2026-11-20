@@ -6,6 +6,11 @@
 # past one instance (render.com/docs/disks, "Disk limitations and considerations"). The disk is
 # mounted at runtime only: nothing in the build touches /var/data.
 #
+# /var/data holds the email ledger (audit-ledger.jsonl), shared reports (reports/, one JSON file
+# per link, created on first boot), idea feedback (idea-feedback.jsonl) and the industry web-search
+# cache (search-cache.json: public search results only, no visitor data). Render disk snapshots
+# may keep deleted shared reports for a while.
+#
 # First deploy: every `sync: false` variable may be left blank (AI off, CRM off, gate inactive).
 # Render prompts for `sync: false` values only when the Blueprint is first created; add later
 # secrets in the service's Environment page.
@@ -55,6 +60,62 @@ services:
         value: "@offshorly.com"
       - key: CRM_SYNC_ALLOWLISTED
         value: "false"
+      # --- Sessions, idea feedback and admin (Amendment 5) ---
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      - key: FEEDBACK_PATH
+        value: /var/data/idea-feedback.jsonl
+      - key: FEEDBACK_RETENTION_DAYS
+        value: "365"
+      # Bearer token for /api/admin/feedback.csv and share deletion; copy it from the Environment page.
+      - key: ADMIN_TOKEN
+        generateValue: true
+      # --- Share links (Amendment 5) ---
+      - key: SHARE_LINKS
+        value: "on"
+      - key: REPORTS_DIR
+        value: /var/data/reports
+      - key: SHARE_RETENTION_DAYS
+        value: "30"
+      - key: SHARE_MAX_FILES
+        value: "5000"
+      - key: SHARE_MIN_FREE_MB
+        value: "150"
+      # --- Email the report (Amendment 5 Phase 4): off until all are set ---
+      # Needs MAIL_PROVIDER=resend, MAIL_API_KEY, a valid MAIL_FROM, an https PUBLIC_ORIGIN and
+      # SHARE_LINKS=on. Anything missing → email off with a warning in the logs (no boot failure).
+      - key: MAIL_PROVIDER
+        sync: false
+      - key: MAIL_API_KEY
+        sync: false
+      # e.g. Offshorly audit <audit@mail.offshorly.com>
+      - key: MAIL_FROM
+        sync: false
+      # A monitored inbox.
+      - key: MAIL_REPLY_TO
+        sync: false
+      # Registered company details for the email footer (≤200 chars); blank → "Offshorly Ltd".
+      - key: MAIL_FOOTER_LINE
+        sync: false
+      # Resend free tier: 100/day, 3,000/month.
+      - key: MAIL_DAILY_MAX
+        value: "90"
+      # --- Web-search grounding (Amendment 5 Phase 5): off until both are set ---
+      # serpapi (the only provider built so far) + its key.
+      - key: SEARCH_PROVIDER
+        sync: false
+      - key: SEARCH_API_KEY
+        sync: false
+      - key: SEARCH_CACHE_PATH
+        value: /var/data/search-cache.json
+      - key: SEARCH_CACHE_DAYS
+        value: "7"
+      # Provider requests per UTC day (two per industry refresh). 20/day could reach ~600/month,
+      # above SerpApi's free 250/month; the 7-day cache keeps real use near 140/month (16 industries
+      # x 2 queries, refreshed weekly at most). The monthly cap is SerpApi's own usage limit, not
+      # enforced here. Unknown SEARCH_PROVIDER, or fixture here, → search off with a warning.
+      - key: SEARCH_DAILY_MAX
+        value: "20"
       # --- Twenty CRM: both blank = CRM off ---
       # Cloud: https://api.twenty.com ; self-hosted: your Twenty server origin.
       - key: TWENTY_API_URL

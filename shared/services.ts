@@ -15,8 +15,8 @@ export const SERVICES: Record<ServiceId, Service> = {
     name: 'Free AI Consultation',
     path: '/free-ai-consultation/',
     kind: 'ai',
-    fitsWhen:
-      'Any high-volume, rule-heavy, costly-by-hand process; the default first step, and the right choice when evidence is thin',
+    // The report's CTA only: never offered to the model as an opportunity service (Amendment 4).
+    fitsWhen: 'The first conversation: finds the costliest manual process before anything is built',
   },
   'ai-automation': {
     id: 'ai-automation',
@@ -38,7 +38,7 @@ export const SERVICES: Record<ServiceId, Service> = {
     name: 'AI Development Services',
     path: '/ai-development-services/',
     kind: 'ai',
-    fitsWhen: 'Wants custom AI built without hiring an in-house team yet',
+    fitsWhen: 'Custom AI where the shape of the solution is still unclear, or wanted without hiring an in-house team yet',
   },
   'dedicated-ai-teams': {
     id: 'dedicated-ai-teams',
@@ -89,6 +89,20 @@ export const SERVICES: Record<ServiceId, Service> = {
 export const SERVICE_IDS = Object.keys(SERVICES) as ServiceId[];
 
 export const AI_SERVICE_IDS = SERVICE_IDS.filter((id) => SERVICES[id].kind === 'ai') as AiServiceId[];
+
+/**
+ * Services an AI idea may map to (Amendment 4): every AI service except the free consultation,
+ * which stays the report's call to action and is never an idea's service.
+ */
+export const OPPORTUNITY_SERVICE_IDS = AI_SERVICE_IDS.filter((id) => id !== 'free-ai-consultation') as Exclude<
+  AiServiceId,
+  'free-ai-consultation'
+>[];
+
+export type OpportunityServiceId = (typeof OPPORTUNITY_SERVICE_IDS)[number];
+
+export const isOpportunityServiceId = (id: unknown): id is OpportunityServiceId =>
+  typeof id === 'string' && (OPPORTUNITY_SERVICE_IDS as readonly string[]).includes(id);
 
 export const isServiceId = (id: string): id is ServiceId => Object.hasOwn(SERVICES, id);
 
@@ -148,5 +162,10 @@ export const CTA = {
   privacy: {
     label: 'Privacy policy',
     url: 'https://offshorly.com/privacy-policy/',
+  },
+  /** Shared report pages: "Run a free audit of your own site". The tool's own origin until the owner names a page. */
+  auditPage: {
+    label: 'Run a free audit of your own site',
+    url: '/',
   },
 } as const;

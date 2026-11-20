@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { CTA } from '../../shared/services.js';
 import type { ErrorCode, TeamSize } from '../../shared/types.js';
-import { BUSINESS_TYPE_SUGGESTIONS, COPY, EXAMPLE_BUYER, TEAM_SIZE_OPTIONS } from '../content/copy.js';
+import { COPY, EXAMPLE_BUYER, INDUSTRY_OPTIONS, TEAM_SIZE_OPTIONS } from '../content/copy.js';
 import { checkEmailInput, LIMITS, normaliseUrlInput, type FormValues } from '../lib/form.js';
 import { ExternalLink } from './ui.js';
 
@@ -66,16 +66,25 @@ const Field = ({
   id,
   label,
   hint,
+  optional,
   children,
 }: {
   id: string;
   label: string;
   hint?: string;
+  /** Shows the "Optional" tag after the label. */
+  optional?: boolean;
   children: ComponentChildren;
 }) => (
   <div class="oa-field">
     <label class="oa-label" for={id}>
       {label}
+      {optional && (
+        <>
+          {' '}
+          <span class="oa-label__optional">{F.optional}</span>
+        </>
+      )}
     </label>
     {children}
     {hint && (
@@ -92,9 +101,10 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
   // A server email_invalid is shown on the email field itself, not as a form alert.
   const [emailError, setEmailError] = useState<string | null>(errorCode === 'email_invalid' ? error : null);
   const formError = errorCode === 'email_invalid' ? null : error;
-  const hasBuyer = !!(initial.businessType || initial.role || initial.size || initial.sector || initial.trigger);
+  const hasBuyer = !!(initial.role || initial.size || initial.sector || initial.trigger);
+  const hasBusiness = !!(initial.businessType || initial.teamSize || initial.tools || initial.timeSink);
   const [buyerOpen, setBuyerOpen] = useState(hasBuyer);
-  const [detailOpen, setDetailOpen] = useState(!!(initial.teamSize || initial.timeSink));
+  const [businessOpen, setBusinessOpen] = useState(hasBusiness);
   const urlRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
 
@@ -189,6 +199,96 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
             </p>
           </div>
 
+          <Field id={fid('industry')} label={F.industryLabel} optional hint={F.industryHelp}>
+            <select
+              id={fid('industry')}
+              class="oa-input oa-select"
+              value={v.industry}
+              onChange={set('industry')}
+              aria-describedby={`${fid('industry')}-hint`}
+            >
+              <option value="">{F.industryNotSure}</option>
+              {INDUSTRY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Expander label={F.businessToggle} open={businessOpen} onToggle={() => setBusinessOpen((o) => !o)}>
+            <p class="oa-expander__help">{F.businessHelp}</p>
+            <Field id={fid('bt')} label={F.businessTypeLabel} hint={F.businessTypeHelp}>
+              <input
+                id={fid('bt')}
+                class="oa-input"
+                type="text"
+                maxLength={LIMITS.businessType}
+                placeholder={F.businessTypePlaceholder}
+                value={v.businessType}
+                onInput={set('businessType')}
+                aria-describedby={`${fid('bt')}-hint`}
+              />
+            </Field>
+            <Field id={fid('team')} label={F.teamSizeLabel}>
+              <select id={fid('team')} class="oa-input oa-select" value={v.teamSize} onChange={set('teamSize')}>
+                <option value="">{F.teamSizePlaceholder}</option>
+                {TEAM_SIZE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value satisfies TeamSize}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id={fid('tools')} label={F.toolsLabel} hint={F.timeSinkCount(v.tools.length, LIMITS.tools)}>
+              <input
+                id={fid('tools')}
+                class="oa-input"
+                type="text"
+                maxLength={LIMITS.tools}
+                placeholder={F.toolsPlaceholder}
+                value={v.tools}
+                onInput={set('tools')}
+                aria-describedby={`${fid('tools')}-hint`}
+              />
+            </Field>
+            <Field id={fid('sink')} label={F.timeSinkLabel} hint={F.timeSinkCount(v.timeSink.length, LIMITS.timeSink)}>
+              <textarea
+                id={fid('sink')}
+                class="oa-input oa-textarea"
+                rows={3}
+                maxLength={LIMITS.timeSink}
+                placeholder={F.timeSinkPlaceholder}
+                value={v.timeSink}
+                onInput={set('timeSink')}
+                aria-describedby={`${fid('sink')}-hint`}
+              />
+            </Field>
+          </Expander>
+
+          <Expander label={F.buyerToggle} open={buyerOpen} onToggle={() => setBuyerOpen((o) => !o)}>
+            <p class="oa-expander__help">
+              {F.buyerHelp}{' '}
+              <a href="#" class="oa-inline-link" onClick={fillExample}>
+                {F.seeExample}
+              </a>
+            </p>
+            <div class="oa-grid-2">
+              <Field id={fid('role')} label={F.roleLabel}>
+                <input id={fid('role')} class="oa-input" type="text" maxLength={LIMITS.role} placeholder={F.rolePlaceholder} value={v.role} onInput={set('role')} />
+              </Field>
+              <Field id={fid('size')} label={F.sizeLabel}>
+                <input id={fid('size')} class="oa-input" type="text" maxLength={LIMITS.size} placeholder={F.sizePlaceholder} value={v.size} onInput={set('size')} />
+              </Field>
+              <Field id={fid('sector')} label={F.sectorLabel}>
+                <input id={fid('sector')} class="oa-input" type="text" maxLength={LIMITS.sector} placeholder={F.sectorPlaceholder} value={v.sector} onInput={set('sector')} />
+              </Field>
+              <Field id={fid('trigger')} label={F.triggerLabel}>
+                <input id={fid('trigger')} class="oa-input" type="text" maxLength={LIMITS.trigger} placeholder={F.triggerPlaceholder} value={v.trigger} onInput={set('trigger')} />
+              </Field>
+            </div>
+          </Expander>
+
           <div class="oa-grid-2 oa-lead-row">
             <div class="oa-field">
               <label class="oa-label" for={fid('email')}>
@@ -255,73 +355,6 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
           </button>
 
           <p class="oa-privacy">{F.privacyNotice}</p>
-
-          <Expander label={F.buyerToggle} open={buyerOpen} onToggle={() => setBuyerOpen((o) => !o)}>
-            <p class="oa-expander__help">
-              {F.buyerHelp}{' '}
-              <a href="#" class="oa-inline-link" onClick={fillExample}>
-                {F.seeExample}
-              </a>
-            </p>
-            <Field id={fid('bt')} label={F.businessTypeLabel} hint={F.businessTypeHelp}>
-              <input
-                id={fid('bt')}
-                class="oa-input"
-                type="text"
-                list={fid('bt-list')}
-                maxLength={LIMITS.businessType}
-                placeholder={F.businessTypePlaceholder}
-                value={v.businessType}
-                onInput={set('businessType')}
-                aria-describedby={`${fid('bt')}-hint`}
-              />
-              <datalist id={fid('bt-list')}>
-                {BUSINESS_TYPE_SUGGESTIONS.map((s) => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-            </Field>
-            <div class="oa-grid-2">
-              <Field id={fid('role')} label={F.roleLabel}>
-                <input id={fid('role')} class="oa-input" type="text" maxLength={LIMITS.role} placeholder={F.rolePlaceholder} value={v.role} onInput={set('role')} />
-              </Field>
-              <Field id={fid('size')} label={F.sizeLabel}>
-                <input id={fid('size')} class="oa-input" type="text" maxLength={LIMITS.size} placeholder={F.sizePlaceholder} value={v.size} onInput={set('size')} />
-              </Field>
-              <Field id={fid('sector')} label={F.sectorLabel}>
-                <input id={fid('sector')} class="oa-input" type="text" maxLength={LIMITS.sector} placeholder={F.sectorPlaceholder} value={v.sector} onInput={set('sector')} />
-              </Field>
-              <Field id={fid('trigger')} label={F.triggerLabel}>
-                <input id={fid('trigger')} class="oa-input" type="text" maxLength={LIMITS.trigger} placeholder={F.triggerPlaceholder} value={v.trigger} onInput={set('trigger')} />
-              </Field>
-            </div>
-          </Expander>
-
-          <Expander label={F.detailToggle} open={detailOpen} onToggle={() => setDetailOpen((o) => !o)}>
-            <p class="oa-expander__help">{F.detailHelp}</p>
-            <Field id={fid('team')} label={F.teamSizeLabel}>
-              <select id={fid('team')} class="oa-input oa-select" value={v.teamSize} onChange={set('teamSize')}>
-                <option value="">{F.teamSizePlaceholder}</option>
-                {TEAM_SIZE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value satisfies TeamSize}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field id={fid('sink')} label={F.timeSinkLabel} hint={F.timeSinkCount(v.timeSink.length, LIMITS.timeSink)}>
-              <textarea
-                id={fid('sink')}
-                class="oa-input oa-textarea"
-                rows={3}
-                maxLength={LIMITS.timeSink}
-                placeholder={F.timeSinkPlaceholder}
-                value={v.timeSink}
-                onInput={set('timeSink')}
-                aria-describedby={`${fid('sink')}-hint`}
-              />
-            </Field>
-          </Expander>
         </form>
       </div>
     </section>

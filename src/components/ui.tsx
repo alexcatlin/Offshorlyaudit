@@ -5,11 +5,24 @@ import { EFFORT_LABELS, IMPACT_LABELS, OWNER_LABELS } from '../content/copy.js';
 import { safeHref } from '../lib/report.js';
 
 /** External link: always a new tab, never passes the opener. Non-http(s) URLs render as text. */
-export const ExternalLink = ({ href, children, class: cls }: { href: string; children: ComponentChildren; class?: string }) => {
+/** Third-party pages (search results) get "noopener noreferrer nofollow ugc"; our own links "noopener". */
+export const THIRD_PARTY_REL = 'noopener noreferrer nofollow ugc';
+
+export const ExternalLink = ({
+  href,
+  children,
+  class: cls,
+  thirdParty,
+}: {
+  href: string;
+  children: ComponentChildren;
+  class?: string;
+  thirdParty?: boolean;
+}) => {
   const safe = safeHref(href);
   if (!safe) return <span class={cls}>{children}</span>;
   return (
-    <a class={cls} href={safe} target="_blank" rel="noopener">
+    <a class={cls} href={safe} target="_blank" rel={thirdParty ? THIRD_PARTY_REL : 'noopener'}>
       {children}
       <span class="oa-visually-hidden"> (opens in a new tab)</span>
     </a>

@@ -299,3 +299,39 @@ describe('buyer fit honesty filters (model prose only)', () => {
     expect((await runBuyerFit({ pages: PAGES }, { call: call2 })).strengths).toEqual([]);
   });
 });
+
+describe('Amendment 4: buyer fit consistency and industry', () => {
+  it('step 2 schema generates criteria and mismatches before strengths and verdict', async () => {
+    const { STEP2_SCHEMA } = await import('../../server/ai/buyerFit/step2.js');
+    const s = STEP2_SCHEMA as { required: string[]; properties: Record<string, unknown> };
+    expect(Object.keys(s.properties)).toEqual(['criteria', 'mismatchIndex', 'strengths', 'verdict', 'actions']);
+    expect(s.required).toEqual(['criteria', 'mismatchIndex', 'strengths', 'verdict', 'actions']);
+  });
+
+  it('step 2 system prompt carries the consistency rules', async () => {
+    const { buildStep2Prompt } = await import('../../server/ai/buyerFit/step2.js');
+    const { createBoundary } = await import('../../server/ai/prompt.js');
+    const { system } = buildStep2Prompt({ pages: PAGES, framework: step1 }, createBoundary(() => 'abcdabcdabcdabcd'));
+    expect(system).toContain('Strengths, criteria reasoning and mismatches must agree; do not call something present in one place and missing in another.');
+    expect(system).toContain('Call something missing only if it is absent from every page provided.');
+  });
+
+  it('step 1 has a fenced INDUSTRY line only when the visitor chose an industry', async () => {
+    const { call, requests } = fakeCall(step1Data, step2Data(), step1Data, step2Data());
+    await runBuyerFit({ pages: PAGES, industry: 'property' }, { call });
+    await runBuyerFit({ pages: PAGES }, { call });
+    const withInd = requests[0]!.user;
+    const open = withInd.match(/<<<SITE_[0-9a-f]{16}/)![0];
+    const close = open.replace('<<<SITE_', 'END_SITE_') + '>>>';
+    const fenced = withInd.slice(withInd.indexOf(open), withInd.indexOf(close));
+    expect(fenced).toContain('INDUSTRY: Property');
+    expect(requests[2]!.user).not.toContain('INDUSTRY:');
+  });
+
+  it('passes the usage sink to both steps', async () => {
+    const { call, requests } = fakeCall(step1Data, step2Data());
+    const sink = () => undefined;
+    await runBuyerFit({ pages: PAGES }, { call, onUsage: sink });
+    expect(requests.map((r) => r.onUsage)).toEqual([sink, sink]);
+  });
+});

@@ -220,6 +220,16 @@ describe('allow-list', () => {
 });
 
 describe('CRM hand-off', () => {
+  it('flags a cache hit so the note leaves out the original run\'s cost', async () => {
+    const { crm, enqueue } = fakeCrm();
+    app = await build({ crm, config: appConfig({ emailGate: 'off', rateLimitHourly: 100 }) });
+    expect((await post(app, { url: 'acme.example', email: 'jo@acme.example' })).statusCode).toBe(200);
+    expect((await post(app, { url: 'acme.example', email: 'sam@other.example' })).statusCode).toBe(200);
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(enqueue.mock.calls[0]![2]).toEqual({ cacheHit: false });
+    expect(enqueue.mock.calls[1]![2]).toEqual({ cacheHit: true });
+  });
+
   it('enqueues the lead with consent details; the email is lowercased as typed', async () => {
     const { crm, enqueue } = fakeCrm();
     app = await build({ crm });
@@ -273,6 +283,6 @@ describe('/healthz', () => {
   it('reports ledger kind and CRM state', async () => {
     app = await build({ crm: fakeCrm().crm, ledger: new MemoryLedger(), aiConfigError: true, config: appConfig({ aiMode: 'off' }) });
     const res = await app.inject({ method: 'GET', url: '/healthz' });
-    expect(res.json()).toEqual({ ok: true, aiMode: 'off', aiConfigError: true, version: '0.0.0-test', ledger: 'memory', crm: true });
+    expect(res.json()).toEqual({ ok: true, aiMode: 'off', aiConfigError: true, version: '0.0.0-test', ledger: 'memory', crm: true, feedback: 'memory', shares: 'memory', mail: false, search: false });
   });
 });

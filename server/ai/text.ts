@@ -141,5 +141,163 @@ export const coerceEnum = <T extends string>(value: unknown, allowed: readonly T
 
 export const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
+// ---------- Amendment 4: industry knowledge filters ----------
+
+// Nouns for "other firms": "most firms", "leading agencies", "the majority of practices".
+const FIRMS = String.raw`(?:firms|businesses|companies|practices|agencies|organisations|organizations|providers|brands|retailers|sellers|shops|clinics|studios|consultancies|landlords|operators|merchants|suppliers)`;
+// "agents"/"teams" are also everyday nouns ("the most common requests agents handle"), so they
+// count as firm nouns only with at most one word after the quantifier ("most letting agents").
+const PEOPLE_FIRMS = String.raw`(?:agents|teams)`;
+// Up to N filler words between the quantifier and the firm noun ("most UK accountancy firms").
+// Bounded repetition after a literal prefix, so each match attempt is bounded: linear overall.
+const FILLER = (n: number): string => String.raw`(?:[\p{L}\p{N}]+\s+){0,${n}}`;
+
+/**
+ * Claims about what other firms do, or appeals to research, that we can't stand behind.
+ * Model-written industry context with any of these is blanked. Quantifiers (most, majority of,
+ * leading, top) count only before a firm noun, so "the most time-consuming step" and "leading to
+ * delays" pass; competitors/rivals count only in claim shapes ("your competitors", "rivals
+ * already…"). Linear: literal prefixes with bounded repetition.
+ */
+export const ADOPTION_CLAIM = new RegExp(
+  [
+    String.raw`\bmost\s+(?!of\s+the\s+time\b)${FILLER(2)}${FIRMS}\b`,
+    String.raw`\bmajority\s+of\s+${FILLER(2)}${FIRMS}\b`,
+    String.raw`\bleading\s+(?!to\b)${FILLER(1)}${FIRMS}\b`,
+    String.raw`\btop\s+(?!of\b)${FILLER(2)}${FIRMS}\b`,
+    String.raw`\b(?:most|majority\s+of|leading(?!\s+to\b)|top(?!\s+of\b))\s+${FILLER(1)}${PEOPLE_FIRMS}\b`,
+    String.raw`\b(?:your|their|many|most|some|other|local)\s+(?:[\p{L}]+\s+)?(?:competitors|rivals)\b`,
+    String.raw`\b(?:competitors|rivals)\s+(?:are|already|use|now|have|often|increasingly|tend|typically|all)\b`,
+    String.raw`(?<!\bcase\s)\bstudies\b`,
+    String.raw`\bresearch\s+(?:shows|suggests|found|finds)\b`,
+    String.raw`\bsurveys?\s+(?:show|shows|suggest|suggests|found|finds|find)\b`,
+    String.raw`\baccording\s+to\s+(?:a\s+|the\s+|one\s+)?(?:recent\s+)?(?:survey|study|research|report)\b`,
+    String.raw`\bon\s+average\b`,
+    String.raw`\bindustry\s+average\b`,
+  ].join('|'),
+  'iu',
+);
+
+export const hasAdoptionClaim = (text: string): boolean => ADOPTION_CLAIM.test(text);
+
+/** Placeholder for an email address removed from visitor text. */
+export const EMAIL_REDACTED = '[email removed]';
+
+/**
+ * Removes email-like strings from visitor free text, so an address typed into an answer never
+ * reaches a prompt. Token-based (split on whitespace), so linear on any input: a token with an
+ * "@" that has text before it and a dot somewhere after it counts as an email.
+ */
+export const redactEmails = (text: string): string =>
+  text
+    .split(/(\s+)/)
+    .map((tok) => {
+      const at = tok.indexOf('@');
+      return at > 0 && tok.indexOf('.', at + 2) > at + 1 ? EMAIL_REDACTED : tok;
+    })
+    .join('');
+
+// One word: letters/digits, optionally joined by apostrophes or hyphens ("firm's", "Smith-Jones").
+// The separator is required between groups, so matching is linear.
+const WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
+const POSSESSIVE = /['’]s$/iu;
+const UPPER_START = /^\p{Lu}/u;
+/** All-caps acronym of 1–5 letters, optionally plural ("AI", "CRM", "CVs"). */
+const ACRONYM = /^\p{Lu}{1,5}s?$/u;
+const SENTENCE_BREAK = /[.!?\n]/;
+
+/**
+ * Capitalised single words that are never treated as company or product names: days, months,
+ * dates, and well-known UK public bodies, schemes and terms.
+ */
+const COMMON_CAPITALISED = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'english', 'british', 'uk',
+  'christmas', 'easter', 'ofsted', 'hmrc', 'vat', 'gdpr', 'self-assessment',
+]);
+
+/**
+ * Multi-word public bodies, schemes and dates, lowercased. Every word of a matching phrase passes
+ * ("Making Tax Digital"), but a part on its own does not ("House", "Black"). Matched only as
+ * consecutive words separated by whitespace.
+ */
+const KNOWN_PHRASES: readonly (readonly string[])[] = [
+  'companies house', 'making tax digital', 'land registry', 'hm land registry', 'gift aid', 'self assessment',
+  'black friday', 'cyber monday', 'boxing day', 'bank holiday', 'bank holidays', 'good friday', 'new year',
+  'christmas eve', 'christmas day', 'easter monday',
+].map((p) => p.split(' '));
+const PHRASE_FIRST_WORDS = new Set(KNOWN_PHRASES.map((p) => p[0]!));
+
+const bare = (w: string): string => w.toLowerCase().replace(POSSESSIVE, '');
+
+/** Lowercased words (whole, possessive-stripped, and each hyphen part) from the sources. Linear. */
+const sourceWords = (sources: readonly string[]): Set<string> => {
+  const set = new Set<string>();
+  for (const s of sources) {
+    for (const m of s.matchAll(WORD)) {
+      const w = bare(m[0]);
+      set.add(w);
+      if (w.includes('-')) for (const part of w.split('-')) set.add(part.replace(POSSESSIVE, ''));
+    }
+  }
+  return set;
+};
+
+/**
+ * Capitalised words in `text` that look like company or product names and appear in none of the
+ * sources. Skipped: a word at the start of a sentence, an all-caps acronym of 5 letters or fewer,
+ * days, months, well-known UK public bodies, schemes and dates (single words or whole phrases
+ * such as "Companies House"), and a few common words. A hyphenated word passes if the whole word, or each of its
+ * capitalised parts, is in a source. Case-insensitive matching. Linear in text + sources.
+ */
+export const unknownProperNouns = (text: string, sources: readonly string[]): string[] => {
+  let known: Set<string> | null = null;
+  const isKnown = (w: string): boolean => {
+    known ??= sourceWords(sources);
+    return known.has(w) || COMMON_CAPITALISED.has(w);
+  };
+  const words: { word: string; start: number; end: number }[] = [];
+  for (const m of text.matchAll(WORD)) {
+    const start = m.index ?? 0;
+    words.push({ word: m[0], start, end: start + m[0].length });
+  }
+  // Words covered by a known phrase. Each start tries a fixed phrase list of a few words each:
+  // linear in the word count.
+  const inPhrase = new Uint8Array(words.length);
+  for (let i = 0; i < words.length; i++) {
+    if (!PHRASE_FIRST_WORDS.has(bare(words[i]!.word))) continue;
+    for (const phrase of KNOWN_PHRASES) {
+      if (i + phrase.length > words.length) continue;
+      let ok = true;
+      for (let k = 0; k < phrase.length && ok; k++) {
+        const w = words[i + k]!;
+        if (bare(w.word) !== phrase[k]) ok = false;
+        else if (k > 0 && !/^\s+$/.test(text.slice(words[i + k - 1]!.end, w.start))) ok = false;
+      }
+      if (ok) inPhrase.fill(1, i, i + phrase.length);
+    }
+  }
+  const out: string[] = [];
+  let last = 0;
+  for (let i = 0; i < words.length; i++) {
+    const { word, start, end } = words[i]!;
+    const atSentenceStart = i === 0 || SENTENCE_BREAK.test(text.slice(last, start));
+    last = end;
+    if (inPhrase[i]) continue;
+    const parts = word.split('-');
+    const suspects = parts.filter((part, j) => {
+      if (!UPPER_START.test(part)) return false;
+      if (j === 0 && atSentenceStart) return false;
+      return !ACRONYM.test(part.replace(POSSESSIVE, ''));
+    });
+    if (!suspects.length) continue;
+    if (isKnown(bare(word))) continue;
+    if (suspects.every((part) => isKnown(bare(part)))) continue;
+    out.push(word);
+  }
+  return out;
+};
+
 export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);

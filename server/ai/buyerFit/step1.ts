@@ -2,7 +2,7 @@
 // fields and, if blank, the business type, from the homepage text.
 import type { CriterionWeight, EvaluationCriterion, Persona } from '../../../shared/types.js';
 import type { FetchedPage } from '../../site/types.js';
-import type { CallJson, JsonSchema } from '../client.js';
+import type { CallJson, JsonSchema, UsageSink } from '../client.js';
 import { dataRule, fence, visitorValue, type Boundary } from '../prompt.js';
 import { asArray, cleanText, coerceEnum, hasBannedWords, isRecord } from '../text.js';
 
@@ -34,6 +34,8 @@ export interface Step1Input {
   pages: readonly FetchedPage[];
   businessType?: string;
   persona?: Partial<Persona>;
+  /** Playbook label of the industry the visitor chose; absent when not given. */
+  industryLabel?: string;
 }
 
 export interface Step1Result {
@@ -118,6 +120,7 @@ export const buildStep1Prompt = (input: Step1Input, boundary: Boundary): { syste
       boundary,
       [
         `BUSINESS TYPE: ${visitorValue(given.businessType, boundary)}`,
+        ...(input.industryLabel ? [`INDUSTRY: ${visitorValue(input.industryLabel, boundary)}`] : []),
         'THE BUYER:',
         `- Role: ${visitorValue(given.persona.role, boundary)}`,
         `- Business Size: ${visitorValue(given.persona.size, boundary)}`,
@@ -215,7 +218,7 @@ export const parseStep1 = (data: Record<string, unknown>, input: Pick<Step1Input
 
 export const runStep1 = async (
   input: Step1Input,
-  deps: { call: CallJson; boundary: Boundary; logMeta?: Record<string, string> },
+  deps: { call: CallJson; boundary: Boundary; logMeta?: Record<string, string>; onUsage?: UsageSink },
 ): Promise<Step1Result> => {
   const { system, user } = buildStep1Prompt(input, deps.boundary);
   const res = await deps.call({
@@ -227,6 +230,7 @@ export const runStep1 = async (
     label: 'buyerFit.step1',
     accept: acceptStep1,
     ...(deps.logMeta ? { logMeta: deps.logMeta } : {}),
+    ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
   });
   return parseStep1(res.data, input);
 };

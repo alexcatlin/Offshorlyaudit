@@ -427,7 +427,7 @@ describe('Note summary', () => {
     expect(markdown).toContain('**Website health:** 64/100');
     expect(markdown).toContain('- Name a client on the homepage');
     expect(markdown).toContain('- No HSTS header.');
-    expect(markdown).toContain('- Faster invoice processing (AI Automation)');
+    expect(markdown).toContain('- Faster invoice processing (AI Automation) \\[site\\]');
     expect(markdown).toContain('Email not verified');
     expect(markdown).toContain('Marketing opt-in: yes (notice v1, 2026-11-20T10:00:00.000Z)');
     expect(markdown).toContain('Source: audit widget');
@@ -517,5 +517,98 @@ describe('twenty:check', () => {
     expect(lines[0]).toBe('OK list people: https://api.twenty.example accepted the key (0 records returned).');
     expect(lines[1]).toMatch(/^FAILED find person by email \(400\): /);
     expect(lines[2]).toMatch(/^FAILED find company by domain \(403\): .*role/);
+  });
+});
+
+describe('Note summary (Amendment 4)', () => {
+  const aiWithIndustry = (): AiResult => {
+    const ai = sampleAi();
+    return {
+      auditId: 'A'.repeat(22),
+      aiStatus: 'ok',
+      ai: {
+        ...ai,
+        industry: { id: 'accounting', label: 'Accounting', inferred: true },
+        opportunities: [
+          ...ai.opportunities,
+          { ...ai.opportunities[0]!, title: 'Chasing client records', source: 'industry' },
+        ],
+      },
+    };
+  };
+
+  it('adds industry, answers, source tags and the cost line', () => {
+    const { markdown } = buildNote({
+      lead: lead(),
+      report: report(),
+      buyerFit: null,
+      ai: aiWithIndustry(),
+      request: { url: 'acme.example', businessType: 'Bookkeeping firm', teamSize: '11-50', tools: 'Xero, spreadsheets', timeSink: 'Receipts' },
+      costUsd: 0.0421,
+    });
+    expect(markdown).toContain('**Industry:** Accounting (inferred)');
+    expect(markdown).toContain('**Business type:** Bookkeeping firm');
+    expect(markdown).toContain('**Team size:** 11-50');
+    expect(markdown).toContain('**Tools:** Xero, spreadsheets');
+    expect(markdown).toContain('**What eats the week:** Receipts');
+    expect(markdown).toContain('- Faster invoice processing (AI Automation) \\[site\\]');
+    expect(markdown).toContain('- Chasing client records (AI Automation) \\[industry\\]');
+    expect(markdown).toContain('AI cost (est.): $0.04');
+  });
+
+  it("industry falls back to the visitor's choice (given); no cost line when unknown", () => {
+    const { markdown } = buildNote({ lead: lead(), report: report(), buyerFit: null, ai: null, request: { url: 'x', industry: 'legal' }, costUsd: null });
+    expect(markdown).toContain('**Industry:** Legal (given)');
+    expect(markdown).not.toContain('AI cost');
+    expect(markdown).not.toContain('**Tools:**');
+  });
+
+  it('visitor answers are markdown-escaped and capped', () => {
+    const { markdown } = buildNote({
+      lead: lead(),
+      report: report(),
+      buyerFit: null,
+      ai: null,
+      request: { url: 'x', tools: '[x](https://evil.example) # heading', timeSink: `${'long '.repeat(80)}` },
+    });
+    expect(markdown).toContain('**Tools:** \\[x\\]\\(https://evil.example\\) \\# heading');
+    expect(markdown).not.toContain('[x](');
+    const sink = markdown.split('\n').find((l) => l.startsWith('**What eats the week:**'))!;
+    expect(sink.length).toBeLessThanOrEqual(230);
+  });
+
+  it('sync passes the entry answers and settled cost into the note', async () => {
+    const { sync, calls } = setup(baseHandlers());
+    sync.enqueue(
+      lead(),
+      entry({
+        ai: Promise.resolve(aiWithIndustry()),
+        request: { url: 'acme.example', tools: 'Xero' },
+        aiCost: Promise.resolve({ calls: 3, input: 1, output: 1, thinking: 0, cost_usd: 0.031 }),
+      }),
+    );
+    await sync.drain(1_000);
+    const note = calls.find((c) => c.method === 'POST' && c.path === '/rest/notes')!.body as Record<string, unknown>;
+    const text = JSON.stringify(note);
+    expect(text).toContain('**Tools:** Xero');
+    expect(text).toContain('AI cost (est.): $0.03');
+    expect(text).toContain('\\\\[industry\\\\]');
+  });
+
+  it('a cache hit omits the cost line (the cost was paid by the original run)', async () => {
+    const { sync, calls } = setup(baseHandlers());
+    sync.enqueue(
+      lead(),
+      entry({
+        ai: Promise.resolve(aiWithIndustry()),
+        aiCost: Promise.resolve({ calls: 3, input: 1, output: 1, thinking: 0, cost_usd: 0.031 }),
+      }),
+      { cacheHit: true },
+    );
+    await sync.drain(1_000);
+    const note = calls.find((c) => c.method === 'POST' && c.path === '/rest/notes')!.body as Record<string, unknown>;
+    const text = JSON.stringify(note);
+    expect(text).toContain('**AI ideas**');
+    expect(text).not.toContain('AI cost');
   });
 });

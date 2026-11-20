@@ -2,6 +2,12 @@
 // Enabled by ?mock=1 when import.meta.env.DEV is true (see src/api.ts); never in production builds.
 // Pick a variant with &case=full|no-wp|ai-unavailable|buyerfit-unavailable|thin|error-unreadable|rate-limited.
 // &emailUsed=1 answers every POST with 409 email_used; a blank or malformed email gets 400 email_invalid.
+// Amendment 5: POST /api/audit adds a fake session + features; /api/feedback answers 204
+// (&sessionExpired=1 → 410); /api/share creates/deletes an in-memory snapshot and
+// GET /api/share/:id serves it (unknown id → 404). &shareOff=1 hides sharing.
+// Phase 4: POST /api/share/email answers 202 once per session (then 409 already_sent);
+// &emailOff=1 hides the email button, &emailFail=1 answers 502 email_failed.
+// Phase 5: the AI section carries one industry example citing an example.com source.
 // All content is marked "[Sample]" and flagged fixture.
 import { rankFixFirst } from '../../shared/reportLogic.js';
 import type {
@@ -14,8 +20,11 @@ import type {
   BuyerFitResult,
   CheckResult,
   CmsInfo,
+  Features,
   Persona,
+  SharedReport,
 } from '../../shared/types.js';
+import { INDUSTRIES } from '../../shared/industries.js';
 import type { HttpResult, Transport } from '../api.js';
 
 /** Marker string used to verify this module is absent from production bundles. */
@@ -214,6 +223,9 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
     summary: '[Sample] A UK software agency building custom web and mobile apps for mid-sized logistics and retail firms.',
     customers: 'b2b',
   },
+  industry: req.industry
+    ? { id: req.industry, label: INDUSTRIES[req.industry].label, inferred: false }
+    : { id: 'agencies', label: INDUSTRIES.agencies.label, inferred: true },
   opportunities: [
     {
       title: '[Sample] Triage incoming project enquiries',
@@ -228,6 +240,8 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
       confidence: 'likely',
       service: { id: 'ai-automation', name: 'AI Automation', url: 'https://offshorly.com/ai-automation-agency/' },
       proof: { id: 'compliance-tickets', text: 'Daily compliance tickets cut from 140+ to about 20 in around six weeks', url: 'https://offshorly.com/case-studies/' },
+      source: 'site',
+      industryContext: '[Sample] agencies like this often sort enquiries by budget and project type before anyone replies.',
     },
     {
       title: '[Sample] Draft proposals from discovery notes',
@@ -242,6 +256,7 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
       measureFirst: '[Sample] Time from discovery call to proposal sent, over the last ten proposals.',
       confidence: 'worth-checking',
       service: { id: 'ai-agent-development', name: 'AI Agent Development', url: 'https://offshorly.com/ai-agent-development/' },
+      source: 'site',
     },
     {
       title: '[Sample] Screen applications for open roles',
@@ -254,9 +269,36 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
       efficiency: 'capacity',
       measureFirst: '[Sample] Applications per role and hours spent shortlisting.',
       confidence: 'worth-checking',
-      service: { id: 'free-ai-consultation', name: 'Free AI Consultation', url: 'https://offshorly.com/free-ai-consultation/' },
+      service: { id: 'ai-agent-development', name: 'AI Agent Development', url: 'https://offshorly.com/ai-agent-development/' },
+      source: 'site',
+    },
+    {
+      title: '[Sample] Client performance reporting',
+      process: '[Sample] Account teams likely pull figures from several platforms into monthly client reports by hand.',
+      basis: [
+        {
+          kind: 'industry',
+          patternId: 'agencies.client-reporting',
+          industryLabel: INDUSTRIES.agencies.label,
+          text: INDUSTRIES.agencies.patterns.find((p) => p.id === 'agencies.client-reporting')?.text ?? '',
+        },
+      ],
+      aiApproach: '[Sample] Pull the data together automatically and draft the commentary, so the account lead reviews rather than builds.',
+      efficiency: 'time-per-task',
+      measureFirst: '[Sample] How long one monthly client report takes, start to finish.',
+      confidence: 'worth-checking',
+      service: { id: 'ai-automation', name: 'AI Automation', url: 'https://offshorly.com/ai-automation-agency/' },
+      source: 'industry',
+      industryContext: '[Sample] agencies often automate the data gathering first and keep the commentary human.',
     },
   ],
+  industryExamples: [
+    {
+      text: '[Sample] one agency describes drafting monthly client reports automatically and having the account lead check them before sending.',
+      sources: [{ title: '[Sample] How one agency automated client reporting', domain: 'example.com', url: 'https://example.com/sample-article' }],
+    },
+  ],
+  research: { industryId: 'agencies', label: INDUSTRIES.agencies.label, searchedAt: new Date().toISOString() },
   notWorthIt: '[Sample] Founder sales calls: the relationship is the product, and automating them would cost more trust than time saved.',
 });
 
@@ -308,7 +350,17 @@ export const createMockTransport = (search: string): Transport => {
   const raw = params.get('case') ?? 'full';
   const mockCase: MockCase = (CASES as readonly string[]).includes(raw) ? (raw as MockCase) : 'full';
   const emailUsed = params.get('emailUsed') === '1';
+  const sessionExpired = params.get('sessionExpired') === '1';
+  const shareOn = params.get('shareOff') !== '1';
+  const features: Features = { share: shareOn, email: shareOn && params.get('emailOff') !== '1', feedback: true, shareRetentionDays: 30 };
+  const emailFail = params.get('emailFail') === '1';
+  const emailed = new Set<string>();
   const audits = new Map<string, Pending>();
+  /** session → auditId, and the mock's saved snapshots. */
+  const sessions = new Map<string, string>();
+  const shares = new Map<string, SharedReport>();
+  const randomId = () => Array.from({ length: 22 }, () => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 56)]).join('');
+  const expired = { status: 410, body: { code: 'session_expired', error: '[Sample] Session expired.' } };
   console.info(`[mock api] ${MOCK_MARKER} case=${mockCase}`);
 
   return async (method, path, body): Promise<HttpResult> => {
@@ -331,7 +383,56 @@ export const createMockTransport = (search: string): Transport => {
       const { email: _email, name: _name, marketingOptIn: _optIn, ...req } = body as AuditStartBody;
       const report = baseReport(req, mockCase);
       audits.set(report.auditId, { req, report, mockCase, startedAt: Date.now() });
-      return { status: 200, body: report };
+      const session = randomId();
+      sessions.set(session, report.auditId);
+      return { status: 200, body: { ...report, session, features } };
+    }
+
+    if (path === '/api/feedback' && method === 'POST') {
+      await wait(200);
+      return sessionExpired ? expired : { status: 204, body: null };
+    }
+
+    if (path === '/api/share' && (method === 'POST' || method === 'DELETE')) {
+      await wait(300);
+      const token = (body as { session?: string } | undefined)?.session ?? '';
+      const audit = audits.get(sessions.get(token) ?? '');
+      if (sessionExpired || !audit) return expired;
+      if (method === 'DELETE') {
+        for (const [id, s] of shares) if (s.report.domain === audit.report.domain) shares.delete(id);
+        return { status: 204, body: null };
+      }
+      const shareId = randomId();
+      const now = Date.now();
+      const { auditId: _id, ...report } = audit.report;
+      const { url: _url, persona: _p, ...answers } = audit.req;
+      const snap: SharedReport = {
+        v: 1,
+        shareId,
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 30 * 86_400_000).toISOString(),
+        report: { ...report, buyerFitStatus: 'unavailable', aiStatus: 'unavailable' },
+        answers,
+      };
+      shares.set(shareId, snap);
+      return { status: 201, body: { shareId, url: `${window.location.origin}/r/${shareId}?mock=1`, expiresAt: snap.expiresAt } };
+    }
+
+    if (path === '/api/share/email' && method === 'POST') {
+      await wait(600);
+      const token = (body as { session?: string } | undefined)?.session ?? '';
+      if (sessionExpired || !sessions.has(token)) return expired;
+      if (emailFail) return { status: 502, body: { code: 'email_failed', error: '[Sample] Provider failed.' } };
+      if (emailed.has(token)) return { status: 409, body: { code: 'already_sent', error: '[Sample] Already sent.' } };
+      emailed.add(token);
+      return { status: 202, body: { sent: true, expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() } };
+    }
+
+    const shareGet = /^\/api\/share\/([^/]+)$/.exec(path);
+    if (shareGet && method === 'GET') {
+      await wait(300);
+      const snap = shares.get(decodeURIComponent(shareGet[1] ?? ''));
+      return snap ? { status: 200, body: snap } : { status: 404, body: { code: 'not_found', error: '[Sample] Expired.' } };
     }
 
     const m = /^\/api\/audit\/([^/]+)\/(buyer-fit|ai)$/.exec(path);

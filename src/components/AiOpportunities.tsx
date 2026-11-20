@@ -1,9 +1,29 @@
-import type { AiOpportunity, AuditReport, AuditRequest, Basis } from '../../shared/types.js';
-import { CONFIDENCE_LABELS, COPY, CUSTOMERS_LABELS, EFFICIENCY_LABELS, TEAM_SIZE_OPTIONS } from '../content/copy.js';
+import { useEffect, useState } from 'preact/hooks';
+import { industryPhrase, OTHER_INDUSTRY_FALLBACK_LABEL } from '../../shared/industries.js';
+import type { AiOpportunity, AiSection, AuditReport, AuditRequest, Basis, ExampleSource, IndustryExample } from '../../shared/types.js';
+import {
+  AI_LOADING_STAGES,
+  CONFIDENCE_LABELS,
+  COPY,
+  CUSTOMERS_LABELS,
+  EFFICIENCY_LABELS,
+  TEAM_SIZE_OPTIONS,
+} from '../content/copy.js';
 import { Cta } from './Cta.js';
+import { formatDate } from '../lib/report.js';
+import { FeedbackButtons, type Vote, type VoteHandler } from './FeedbackButtons.js';
 import { ExternalLink, Skeleton } from './ui.js';
 
 const A = COPY.ai;
+
+/** "{title} ({domain})", or the domain alone when the server left the title out. */
+export const sourceLabel = (s: ExampleSource): string => (s.title ? `${s.title} (${s.domain})` : s.domain);
+
+const SourceLink = ({ s }: { s: ExampleSource }) => (
+  <ExternalLink class="oa-source-link" href={s.url} thirdParty>
+    {sourceLabel(s)}
+  </ExternalLink>
+);
 
 const BasisItem = ({ b, request }: { b: Basis; request: AuditRequest }) => {
   if (b.kind === 'quote') {
@@ -20,29 +40,70 @@ const BasisItem = ({ b, request }: { b: Basis; request: AuditRequest }) => {
   if (b.kind === 'answer') {
     const text =
       b.field === 'timeSink'
-        ? request.timeSink
-        : request.teamSize
-          ? A.basisTeamSize(TEAM_SIZE_OPTIONS.find((o) => o.value === request.teamSize)?.label ?? request.teamSize)
-          : undefined;
+        ? request.timeSink && `“${request.timeSink}”`
+        : b.field === 'tools'
+          ? request.tools && A.basisTools(request.tools)
+          : request.teamSize
+            ? A.basisTeamSize(TEAM_SIZE_OPTIONS.find((o) => o.value === request.teamSize)?.label ?? request.teamSize)
+            : undefined;
     return (
       <li class="oa-basis oa-basis--answer">
         <span class="oa-basis__kind">{A.basisToldUs}</span>
-        {text && <span class="oa-basis__text">{b.field === 'timeSink' ? `“${text}”` : text}</span>}
+        {text && <span class="oa-basis__text">{text}</span>}
       </li>
     );
   }
-  return (
-    <li class="oa-basis oa-basis--stack">
-      <span class="oa-basis__kind">{A.basisStack}</span>
-      <span class="oa-basis__text">{A.basisDetected(b.name)}</span>
-    </li>
-  );
+  if (b.kind === 'industry') {
+    return (
+      <li class="oa-basis oa-basis--industry">
+        <span class="oa-basis__kind">{A.basisIndustry(b.industryLabel === OTHER_INDUSTRY_FALLBACK_LABEL ? undefined : b.industryLabel || undefined)}</span>
+        <span class="oa-basis__text">{b.text}</span>
+      </li>
+    );
+  }
+  if (b.kind === 'source') {
+    return (
+      <li class="oa-basis oa-basis--source">
+        <span class="oa-basis__kind">{A.basisSource}</span>
+        <span class="oa-basis__text">
+          <SourceLink s={b} />
+        </span>
+      </li>
+    );
+  }
+  if (b.kind === 'stack') {
+    return (
+      <li class="oa-basis oa-basis--stack">
+        <span class="oa-basis__kind">{A.basisStack}</span>
+        <span class="oa-basis__text">{A.basisDetected(b.name)}</span>
+      </li>
+    );
+  }
+  return null;
 };
 
-const Opportunity = ({ o, request }: { o: AiOpportunity; request: AuditRequest }) => (
-  <li class="oa-opp">
+/** An idea and its index in `ai.opportunities` (the feedback route's ideaIndex). */
+interface Indexed {
+  o: AiOpportunity;
+  index: number;
+}
+
+const Opportunity = ({
+  o,
+  index,
+  request,
+  onVote,
+  vote,
+}: {
+  o: AiOpportunity;
+  index: number;
+  request: AuditRequest;
+  onVote?: VoteHandler;
+  vote?: Vote;
+}) => (
+  <li class={o.source === 'industry' ? 'oa-opp oa-opp--industry' : 'oa-opp'}>
     <div class="oa-opp__head">
-      <h4 class="oa-opp__title">{o.title}</h4>
+      <h5 class="oa-opp__title">{o.title}</h5>
       <span class={`oa-pill oa-pill--confidence-${o.confidence}`}>
         <span class="oa-visually-hidden">{A.confidenceLabel}: </span>
         {CONFIDENCE_LABELS[o.confidence]}
@@ -67,6 +128,12 @@ const Opportunity = ({ o, request }: { o: AiOpportunity; request: AuditRequest }
         <dt>{A.howAiCouldHelp}</dt>
         <dd>{o.aiApproach}</dd>
       </div>
+      {o.industryContext && (
+        <div class="oa-opp__row">
+          <dt>{A.inYourIndustry}</dt>
+          <dd>{o.industryContext}</dd>
+        </div>
+      )}
       <div class="oa-opp__row oa-opp__row--split">
         <div>
           <dt>{A.likelyBenefit}</dt>
@@ -93,8 +160,69 @@ const Opportunity = ({ o, request }: { o: AiOpportunity; request: AuditRequest }
       <span class="oa-opp__service-label">{A.suggestedService}:</span>{' '}
       <ExternalLink href={o.service.url}>{A.serviceLink(o.service.name)} →</ExternalLink>
     </p>
+    {onVote && <FeedbackButtons index={index} onVote={onVote} initialVote={vote ?? null} />}
   </li>
 );
+
+const Group = ({
+  heading,
+  intro,
+  items,
+  request,
+  modifier,
+  onVote,
+  votes,
+}: {
+  heading: string;
+  intro?: string;
+  items: Indexed[];
+  request: AuditRequest;
+  modifier: 'site' | 'industry';
+  onVote?: VoteHandler;
+  votes?: Readonly<Record<number, Vote>>;
+}) =>
+  items.length ? (
+    <section class={`oa-opp-group oa-opp-group--${modifier}`}>
+      <h4 class="oa-opp-group__heading">{heading}</h4>
+      {intro && <p class="oa-opp-group__intro">{intro}</p>}
+      <ol class="oa-opps">
+        {items.map(({ o, index }) => (
+          <Opportunity key={index} o={o} index={index} request={request} onVote={onVote} vote={votes?.[index]} />
+        ))}
+      </ol>
+    </section>
+  ) : null;
+
+/**
+ * Phase 5: "What others in {industry} are doing", from cited web-search results. Hidden with no
+ * examples (and in older JSON, which has none).
+ */
+export const IndustryExamples = ({ examples, label, searchedAt }: { examples?: IndustryExample[]; label?: string; searchedAt?: string }) => {
+  const items = (examples ?? []).filter((e) => e && typeof e.text === 'string' && e.text && Array.isArray(e.sources) && e.sources.length);
+  if (!items.length) return null;
+  return (
+    <section class="oa-opp-group oa-examples">
+      <h4 class="oa-opp-group__heading">{A.examplesHeading(label || undefined)}</h4>
+      {searchedAt && <p class="oa-opp-group__intro">{A.examplesIntro(formatDate(searchedAt))}</p>}
+      <ul class="oa-examples__list">
+        {items.map((e, i) => (
+          <li key={i} class="oa-example">
+            <p class="oa-example__text">{e.text}</p>
+            <p class="oa-example__sources">
+              <span class="oa-example__label">{A.examplesSource}</span>{' '}
+              {e.sources.map((s, j) => (
+                <span key={j}>
+                  {j > 0 && '; '}
+                  <SourceLink s={s} />
+                </span>
+              ))}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
 
 const Pitch = ({ heading, text }: { heading: string; text: string }) => (
   <section class="oa-card oa-pitch">
@@ -103,17 +231,48 @@ const Pitch = ({ heading, text }: { heading: string; text: string }) => (
   </section>
 );
 
-export const AiOpportunities = ({ report, request }: { report: AuditReport; request: AuditRequest }) => {
+/** Pending state: staged messages, timer-driven like the main loading screen. */
+const AiPending = () => {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const t = setInterval(() => setElapsed((Date.now() - started) / 1000), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const stage = AI_LOADING_STAGES.reduce((acc, s, i) => (elapsed >= s.afterSec ? i : acc), 0);
+  return (
+    <section class="oa-card">
+      <Skeleton lines={5} text={AI_LOADING_STAGES[stage]?.text ?? COPY.report.pending} />
+      <p class="oa-muted oa-small">{COPY.report.pendingDetail}</p>
+    </section>
+  );
+};
+
+/** Industry badge text, e.g. "Legal · inferred from your site". None for the generic fallback. */
+export const industryBadge = (industry: AiSection['industry']): string | null => {
+  if (!industry?.label || industry.label === OTHER_INDUSTRY_FALLBACK_LABEL) return null;
+  return industry.inferred ? `${industry.label} · ${A.industryBadgeInferred}` : industry.label;
+};
+
+/** `onVote` present = live mode: each idea gets Useful / Not useful. Absent in shared and print modes. */
+export const AiOpportunities = ({
+  report,
+  request,
+  onVote,
+  votes,
+}: {
+  report: AuditReport;
+  request: AuditRequest;
+  onVote?: VoteHandler;
+  votes?: Readonly<Record<number, Vote>>;
+}) => {
   const status = report.aiStatus;
 
   if (status === 'pending') {
     return (
       <div class="oa-ai">
         <p class="oa-ai__intro">{A.intro}</p>
-        <section class="oa-card">
-          <Skeleton lines={5} text={COPY.report.pending} />
-          <p class="oa-muted oa-small">{COPY.report.pendingDetail}</p>
-        </section>
+        <AiPending />
         <Cta variant="ai" />
       </div>
     );
@@ -135,21 +294,44 @@ export const AiOpportunities = ({ report, request }: { report: AuditReport; requ
   }
 
   const customers = CUSTOMERS_LABELS[ai.business.customers];
+  const badge = industryBadge(ai.industry);
+  // Older JSON has no `source`: those ideas are site ideas.
+  const indexed: Indexed[] = ai.opportunities.map((o, index) => ({ o, index }));
+  const siteIdeas = indexed.filter(({ o }) => o.source !== 'industry');
+  const industryIdeas = indexed.filter(({ o }) => o.source === 'industry');
+  // The generic fallback label is not an industry: the heading then names none.
+  const rawLabel = ai.industry?.label ?? '';
+  const industryLabel = rawLabel === OTHER_INDUSTRY_FALLBACK_LABEL ? '' : rawLabel;
   return (
     <div class="oa-ai">
       <p class="oa-ai__intro">{A.intro}</p>
       <section class="oa-card oa-business">
         <h3 class="oa-eyebrow">{A.businessHeading}</h3>
         <p class="oa-business__summary">{ai.business.summary}</p>
-        {customers && <span class="oa-badge">{customers}</span>}
+        {(badge || customers) && (
+          <div class="oa-business__badges">
+            {badge && <span class="oa-badge oa-badge--industry">{badge}</span>}
+            {customers && <span class="oa-badge">{customers}</span>}
+          </div>
+        )}
       </section>
 
       <h3 class="oa-ai__heading">{A.ideasHeading(ai.opportunities.length)}</h3>
-      <ol class="oa-opps">
-        {ai.opportunities.map((o, i) => (
-          <Opportunity key={i} o={o} request={request} />
-        ))}
-      </ol>
+      <Group heading={A.siteGroupHeading} items={siteIdeas} request={request} modifier="site" onVote={onVote} votes={votes} />
+      <Group
+        heading={A.industryGroupHeading(industryLabel || undefined)}
+        intro={A.industryGroupIntro}
+        items={industryIdeas}
+        request={request}
+        modifier="industry"
+        onVote={onVote}
+        votes={votes}
+      />
+      <IndustryExamples
+        examples={ai.industryExamples}
+        label={ai.research ? industryPhrase(ai.research.industryId, ai.research.label) : industryPhrase(ai.industry?.id, industryLabel)}
+        searchedAt={ai.research?.searchedAt}
+      />
 
       <section class="oa-card oa-notworth">
         <h3 class="oa-card__title">{A.notWorthItHeading}</h3>

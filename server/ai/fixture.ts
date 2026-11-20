@@ -1,10 +1,12 @@
 // Fixture mode: deterministic "[Sample]" output built from the real pages, run through the
 // same parsers and validators as live output. Callers set `fixture: true` on the report so
 // the UI shows "Sample AI output for development, not an analysis of this site".
+import { INDUSTRIES, OTHER_INDUSTRY, patternsFor } from '../../shared/industries.js';
 import type { BuyerFit, Persona } from '../../shared/types.js';
 import type { FetchedPage } from '../site/types.js';
 import { postprocessBuyerFit } from './buyerFit/postprocess.js';
 import { parseStep1 } from './buyerFit/step1.js';
+import { validateContextFor } from './opportunities/run.js';
 import { validateOpportunities } from './opportunities/validate.js';
 import type { OpportunitiesInput, OpportunitiesResult } from './types.js';
 
@@ -84,51 +86,88 @@ export const fixtureOpportunities = (input: OpportunitiesInput): OpportunitiesRe
   const sentences = sampleSentences(input.pages, 2);
   const saasTech = input.stack.filter((t) => t.category !== 'analytics');
   const techIds = (saasTech.length ? saasTech : input.stack).slice(0, 3).map((t) => t.id);
-  const answered = Boolean(input.timeSink?.trim() || input.teamSize);
+  const answered = Boolean(input.timeSink?.trim() || input.tools?.trim() || input.teamSize);
+  // The visitor's industry when given; otherwise the generic set, as the model's 'other'.
+  // Industry-idea prose stays lowercase after "[Sample]": the proper-noun filter would read a
+  // capital there as a name, since "]" doesn't end a sentence.
+  const industryId = input.industry ?? OTHER_INDUSTRY;
+  const pattern = patternsFor(industryId)[0];
+  // Phase 5: with search results, one sample example citing the first (validation drops it when
+  // the searched industry differs from this one, as it would for the model).
+  const firstSource = input.research?.sources[0]?.id ?? null;
 
   const opportunities = [
     {
       title: '[Sample] Faster handling of incoming enquiries',
+      source: 'site',
+      patternId: null,
       process: '[Sample] Enquiries arrive through the website and are read, sorted and answered by hand.',
       quotes: sentences,
       techIds,
       usesAnswer: answered,
       aiApproach: '[Sample] An assistant drafts replies and routes each enquiry, with a person approving before anything is sent.',
+      industryContext: '[Sample] businesses like this often sort enquiries by type before anyone replies.',
       efficiency: 'turnaround',
       measureFirst: '[Sample] Count enquiries per week and time a typical reply.',
       confidence: 'likely',
       serviceId: saasTech.length >= 2 ? 'ai-saas-enhancer' : 'ai-automation',
       proofId: 'lender-appraisal',
+      sourceIds: [],
     },
     {
       title: '[Sample] Tidier internal reporting',
+      source: 'site',
+      patternId: null,
       process: '[Sample] Someone pulls figures from several tools into a weekly update by hand.',
       quotes: sentences.slice(1),
       techIds,
       usesAnswer: answered,
       aiApproach: '[Sample] Pull the data automatically and have AI draft the summary for review.',
+      industryContext: '',
       efficiency: 'time-per-task',
       measureFirst: '[Sample] Note who builds the report and how long it takes.',
       confidence: 'worth-checking',
-      serviceId: 'free-ai-consultation',
+      serviceId: 'ai-development-services',
       proofId: null,
+      sourceIds: [],
     },
+    ...(pattern
+      ? [
+          {
+            title: `[Sample] ${pattern.title}`,
+            source: 'industry',
+            patternId: pattern.id,
+            process: '[Sample] this work may be done by hand today; worth checking how it is handled now.',
+            quotes: [],
+            techIds: [],
+            usesAnswer: false,
+            aiApproach: '[Sample] start with one narrow step of this work, automate it, and measure before going further.',
+            industryContext: '[Sample] businesses of this type often start with the simplest repetitive step.',
+            efficiency: 'capacity',
+            measureFirst: '[Sample] how often this work happens and who does it.',
+            confidence: 'worth-checking',
+            serviceId: pattern.serviceId,
+            proofId: null,
+            sourceIds: firstSource ? [firstSource] : [],
+          },
+        ]
+      : []),
   ];
 
   const raw = {
     business: {
       summary: `[Sample] ${input.pages[0]?.title || 'A business'} as described on its homepage.`,
       customers: 'unclear',
+      industryId,
+      industryLabel: input.industry ? INDUSTRIES[input.industry].label : '[Sample] general business',
     },
     opportunities,
+    industryExamples: firstSource
+      ? [{ text: '[Sample] one business in this industry describes using an assistant to sort incoming requests before a person replies.', sourceIds: [firstSource] }]
+      : [],
     notWorthIt: '[Sample] Conversations that rely on long-standing client relationships are best left to people.',
   };
 
-  const result = validateOpportunities(raw, {
-    pages: input.pages,
-    stack: input.stack,
-    ...(input.teamSize ? { teamSize: input.teamSize } : {}),
-    ...(input.timeSink ? { timeSink: input.timeSink } : {}),
-  });
+  const result = validateOpportunities(raw, validateContextFor(input));
   return { ...result, fixture: true };
 };

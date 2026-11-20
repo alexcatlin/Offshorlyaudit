@@ -14,6 +14,11 @@ describe('validateAuditRequest', () => {
     expect(r).toEqual({ ok: true, value: { url: 'acme.example', persona: { role: 'Owner' }, timeSink: 'quotes' } });
   });
 
+  it('an answer that is only redacted emails is treated as blank; mixed text keeps the placeholder', () => {
+    const r = validateAuditRequest({ url: 'a.example', timeSink: ' jo@acme.example ', tools: 'a@b.co, c@d.co', businessType: 'Letting agent jo@acme.example' });
+    expect(r).toEqual({ ok: true, value: { url: 'a.example', businessType: 'Letting agent [email removed]' } });
+  });
+
   it('rejects bad shapes and overlong fields', () => {
     expect(validateAuditRequest(null).ok).toBe(false);
     expect(validateAuditRequest([]).ok).toBe(false);
@@ -209,5 +214,120 @@ describe('AI slots (limitAiConcurrency + runAudit)', () => {
     expect(run.aiBusy).toBe(false);
     expect(slots.inUse).toBe(0);
     expect(c.calls()).toBe(0);
+  });
+});
+
+describe('Amendment 4: request fields', () => {
+  it('industry: valid kept, blank omitted, invalid → 400', () => {
+    expect(validateAuditRequest({ url: 'a.example', industry: 'legal' })).toEqual({ ok: true, value: { url: 'a.example', industry: 'legal' } });
+    expect(validateAuditRequest({ url: 'a.example', industry: '' })).toEqual({ ok: true, value: { url: 'a.example' } });
+    expect(validateAuditRequest({ url: 'a.example', industry: null })).toEqual({ ok: true, value: { url: 'a.example' } });
+    expect(validateAuditRequest({ url: 'a.example', industry: 'astrology' }).ok).toBe(false);
+    expect(validateAuditRequest({ url: 'a.example', industry: 'other' }).ok).toBe(false);
+    expect(validateAuditRequest({ url: 'a.example', industry: 3 }).ok).toBe(false);
+  });
+
+  it('tools: up to 150 characters; over → 400', () => {
+    expect(validateAuditRequest({ url: 'a.example', tools: ` ${'x'.repeat(150)} ` })).toEqual({ ok: true, value: { url: 'a.example', tools: 'x'.repeat(150) } });
+    expect(validateAuditRequest({ url: 'a.example', tools: 'x'.repeat(151) }).ok).toBe(false);
+    expect(validateAuditRequest({ url: 'a.example', tools: 7 }).ok).toBe(false);
+  });
+
+  it('redacts email addresses from every free-text field', () => {
+    const r = validateAuditRequest({
+      url: 'a.example',
+      businessType: 'Law firm jo@a.example',
+      tools: 'Xero, ask sam@b.co.uk',
+      timeSink: 'emails to x.y+z@c.org all day',
+      persona: { role: 'CFO a@b.io', size: 'Big c@d.io', sector: 'Retail e@f.io', trigger: 'Growth g@h.io' },
+    });
+    expect(r.ok).toBe(true);
+    const text = JSON.stringify(r.ok ? r.value : {});
+    expect(text).not.toMatch(/@/);
+    expect(text).toContain('[email removed]');
+    // A field that was only an email is dropped (blank), not kept as a bare placeholder.
+    expect(validateAuditRequest({ url: 'a.example', tools: 'jo@a.example' })).toEqual({ ok: true, value: { url: 'a.example' } });
+  });
+});
+
+describe('Amendment 4: inputs reach both engines; one cost line', () => {
+  it('passes business type, industry, tools, team size and time sink to opportunities, industry to buyer fit', async () => {
+    const seen: { bf?: unknown; opp?: unknown } = {};
+    const engine: AiEngine = {
+      mode: 'live',
+      buyerFit: async (input) => {
+        seen.bf = input;
+        return sampleBuyerFit();
+      },
+      opportunities: async (input) => {
+        seen.opp = input;
+        return { status: 'ok', ai: sampleAi() };
+      },
+    };
+    const run = await runAudit(
+      { url: 'acme.example', businessType: 'Bookkeeper', industry: 'accounting', tools: 'Xero', teamSize: '1-10', timeSink: 'Receipts' },
+      auditDeps(siteRoutes(), { ai: engine, costLog: () => undefined }),
+    );
+    await Promise.all([run.buyerFit, run.ai]);
+    expect(seen.opp).toMatchObject({ businessType: 'Bookkeeper', industry: 'accounting', tools: 'Xero', teamSize: '1-10', timeSink: 'Receipts' });
+    expect(seen.bf).toMatchObject({ businessType: 'Bookkeeper', industry: 'accounting' });
+    expect(run.request).toMatchObject({ industry: 'accounting', tools: 'Xero' });
+  });
+
+  it('ai_audit_cost fires once after both settle, with every attempt counted and no prose, answers or email', async () => {
+    const lines: unknown[] = [];
+    const engine: AiEngine = {
+      mode: 'live',
+      buyerFit: async (_i, _m, onUsage) => {
+        onUsage?.({ input_tokens: 1000, output_tokens: 100 }, 'claude-sonnet-5-5');
+        onUsage?.({ input_tokens: 2000, output_tokens: 200, thinking_tokens: 50 }, 'claude-sonnet-5-5');
+        return sampleBuyerFit();
+      },
+      opportunities: async (_i, _m, onUsage) => {
+        onUsage?.({ input_tokens: 3000, output_tokens: 300 }, 'claude-sonnet-5-5');
+        throw new Error('model said something');
+      },
+    };
+    const run = await runAudit(
+      { url: 'acme.example', tools: 'Secret tools answer', timeSink: 'Secret week answer' },
+      auditDeps(siteRoutes(), { ai: engine, costLog: (e) => lines.push(e) }),
+    );
+    const cost = await run.aiCost;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toEqual({
+      msg: 'ai_audit_cost',
+      auditId: run.report.auditId,
+      domain: 'acme.example',
+      calls: 3,
+      input: 6000,
+      output: 600,
+      thinking: 50,
+      cost_usd: 0.018,
+    });
+    expect(cost).toMatchObject({ calls: 3, cost_usd: 0.018 });
+    const text = JSON.stringify(lines);
+    expect(text).not.toMatch(/Secret|@|model said/);
+  });
+
+  it('no AI → no cost promise and no cost line', async () => {
+    const lines: unknown[] = [];
+    const run = await runAudit({ url: 'acme.example' }, auditDeps(siteRoutes(), { ai: null, costLog: (e) => lines.push(e) }));
+    expect(run.aiCost).toBeNull();
+    expect(lines).toEqual([]);
+  });
+});
+
+describe('Amendment 4: cache key', async () => {
+  const { cacheKey } = await import('../../server/routes/audit.js');
+  const u = new URL('https://acme.example/');
+  it('changes with industry or tools; blank equals absent', () => {
+    const base = cacheKey({ url: 'x' }, u);
+    expect(cacheKey({ url: 'x', industry: 'legal' }, u)).not.toBe(base);
+    expect(cacheKey({ url: 'x', tools: 'Xero' }, u)).not.toBe(base);
+    expect(cacheKey({ url: 'x', industry: 'legal' }, u)).not.toBe(cacheKey({ url: 'x', industry: 'property' }, u));
+    // Validation drops blanks, so a blank never reaches the key; undefined and '' hash the same.
+    expect(cacheKey({ url: 'x', tools: '' }, u)).toBe(base);
+    const blank = validateAuditRequest({ url: 'x', industry: '', tools: '   ' });
+    expect(blank.ok && cacheKey(blank.value, u)).toBe(base);
   });
 });

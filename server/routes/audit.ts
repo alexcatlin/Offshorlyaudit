@@ -4,22 +4,27 @@
 // Amendment 3: the POST body carries lead fields (email required). The route splits it into
 // `{audit: AuditRequest, lead: LeadFields}`; the email never reaches runAudit, the cache key, a
 // prompt or a log line (logs carry the 12-hex prefix of the HMAC key only).
+//
+// Amendment 5: every 200 adds `session` (per response, never cached, never logged) and `features`.
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AiResult, AuditReport, AuditRequest, BuyerFitResult, LeadFields } from '../../shared/types.js';
+import type { AiResult, AuditReport, AuditRequest, AuditStartResponse, BuyerFitResult, Features, LeadFields } from '../../shared/types.js';
 import { runAudit, validateAuditRequest } from '../audit/runAudit.js';
 import type { AuditDeps, AuditRun } from '../audit/runAudit.js';
+import type { AiCostSummary } from '../ai/pricing.js';
 import type { CrmSync } from '../crm/sync.js';
 import type { DailyCounter, Semaphore, SlidingWindowLimiter, TtlLruCache } from '../http/limits.js';
 import { sendError } from '../http/security.js';
-import { EMAIL_INVALID_MESSAGE, emailKey, isAllowlisted, logHash, validateLeadFields } from '../lead/email.js';
+import type { SessionStore } from '../http/sessions.js';
+import { EMAIL_INVALID_MESSAGE, emailKey, isAllowlisted, logHash, validEmail, validateLeadFields } from '../lead/email.js';
 import type { Allowlist, EmailChecker } from '../lead/email.js';
 import { ledgerAllows } from '../lead/ledger.js';
 import type { AuditLedger } from '../lead/ledger.js';
 import { SiteReadError } from '../site/errors.js';
 import { normaliseInputUrl } from '../site/readSite.js';
 
-export const AI_WAIT_MS = 50_000;
+// Above the opportunities call budget (60 s, Amendment 4), below the client's 100 s GET timeout.
+export const AI_WAIT_MS = 80_000;
 export const BUYER_FIT_WAIT_MS = 80_000;
 
 /** One audit held in memory: the measured report plus its AI promises and, once settled, their results. */
@@ -29,6 +34,10 @@ export interface AuditEntry {
   ai: Promise<AiResult> | null;
   buyerFitResult?: BuyerFitResult;
   aiResult?: AiResult;
+  /** The visitor's answers (no email), for the CRM note. Same for every cache hit: they're in the key. */
+  request?: AuditRequest;
+  /** Settles with the audit's AI usage and estimated cost; null/absent when AI didn't run. */
+  aiCost?: Promise<AiCostSummary> | null;
 }
 
 export interface AuditRouteDeps {
@@ -46,6 +55,10 @@ export interface AuditRouteDeps {
   aiWaitMs?: number;
   buyerFitWaitMs?: number;
   lead: LeadDeps;
+  /** Per-response sessions (Amendment 5): every 200 gets its own token. */
+  sessions: SessionStore;
+  /** What the report may offer (share, email, feedback). */
+  features: Features;
   /** Test seam: defaults to runAudit. */
   runAudit?: typeof runAudit;
 }
@@ -99,13 +112,15 @@ export const cacheKey = (req: AuditRequest, url: URL): string => {
     req.persona?.trigger ?? '',
     req.teamSize ?? '',
     req.timeSink ?? '',
+    req.industry ?? '',
+    req.tools ?? '',
   ]);
   const hash = createHash('sha256').update(answers).digest('hex').slice(0, 16);
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '') || '/'}${url.search}#${hash}`;
 };
 
 const entryFromRun = (run: AuditRun): AuditEntry => {
-  const entry: AuditEntry = { report: run.report, buyerFit: run.buyerFit, ai: run.ai };
+  const entry: AuditEntry = { report: run.report, buyerFit: run.buyerFit, ai: run.ai, request: run.request, aiCost: run.aiCost };
   // Remember settled results so cache hits can inline them. These promises never reject.
   run.buyerFit?.then((r) => {
     entry.buyerFitResult = r;
@@ -196,6 +211,9 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       });
     }
 
+    // Syntax here as well as in the checker: canonicalEmail (emailKey, allow-list) must never see
+    // an unvalidated string, whatever EmailChecker is plugged in.
+    if (!validEmail(fields.email)) return sendError(reply, 400, { code: 'email_invalid', error: EMAIL_INVALID_MESSAGE });
     const emailCheck = await lead.emailChecker.check(fields.email);
     if (emailCheck !== 'ok') return sendError(reply, 400, { code: 'email_invalid', error: EMAIL_INVALID_MESSAGE });
 
@@ -277,12 +295,22 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
               test: allowlisted,
             },
             entry,
+            // A hit (cached or shared run) spent nothing new: the note omits the cost line.
+            { cacheHit: hit },
           );
         } catch (e) {
           req.log.error({ ...meta, error: (e as Error).name }, 'crm enqueue failed');
         }
       }
-      return reply.send(hit ? reportWithSettled(entry) : entry.report);
+      // A fresh object: the session and features are per response and never touch the cached report.
+      const session = deps.sessions.create({
+        entry,
+        emailKey: key,
+        allowlisted,
+        marketingOptIn: fields.marketingOptIn === true,
+      });
+      const body: AuditStartResponse = { ...(hit ? reportWithSettled(entry) : entry.report), session, features: deps.features };
+      return reply.send(body);
     } catch (e) {
       if (e instanceof BusyError) {
         // A refused audit doesn't use up the visitor's allowance.

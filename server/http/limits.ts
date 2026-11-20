@@ -104,12 +104,18 @@ export class DailyCounter {
     }
   }
 
-  /** Takes one unit if any remain today. */
-  tryTake(): boolean {
+  /** Takes `n` units (default one) if that many remain today; all or none. */
+  tryTake(n = 1): boolean {
     this.roll();
-    if (this.count >= this.max) return false;
-    this.count++;
+    if (this.count + n > this.max) return false;
+    this.count += n;
     return true;
+  }
+
+  /** Gives back `n` units taken today (e.g. the action was refused further on). */
+  refund(n = 1): void {
+    this.roll();
+    this.count = Math.max(0, this.count - n);
   }
 
   get used(): number {
