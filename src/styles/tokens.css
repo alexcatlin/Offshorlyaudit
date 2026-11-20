@@ -1,0 +1,53 @@
+/* Offshorly brand tokens. Source: docs/offshorly-brand-and-services.md. */
+:root {
+  /* Colours */
+  --oa-dark: #1c1c22;
+  --oa-white: #ffffff;
+  --oa-text: #2f3037;
+  --oa-muted: #8d8d8d;
+  /* Muted text that passes WCAG AA on white for small text (brand muted is for large text only). */
+  --oa-muted-strong: #64646e;
+  --oa-purple: #7f67f6;
+  --oa-blue: #4da1ff;
+  --oa-mint: #5dd9b3;
+  --oa-tint: #f9f9fe;
+  --oa-input-bg: #f7f7fa;
+  --oa-card-border: #dfe1e5;
+  --oa-input-border: #e0e0e0;
+  --oa-outline-border: #9d9db3;
+  --oa-divider-dark: #393939;
+  --oa-error: #e74c3c;
+  /* Darker shades for text on white (AA contrast); the brand colours stay for fills and borders. */
+  --oa-error-text: #c0392b;
+  --oa-purple-text: #5b43d6;
+  --oa-mint-text: #1d7a5e;
+
+  --oa-on-dark-muted: rgba(255, 255, 255, 0.7);
+  --oa-on-dark-fill: rgba(255, 255, 255, 0.04);
+  --oa-on-dark-border: rgba(255, 255, 255, 0.12);
+
+  --oa-gradient: linear-gradient(88deg, #7f67f6 -1.38%, #4da1ff 53.43%, #5dd9b3 109.9%);
+
+  /* Type */
+  --oa-font-heading: 'urbane', 'Urbanist', system-ui, sans-serif;
+  --oa-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Shape */
+  --oa-radius-card: 16px;
+  --oa-radius-input: 8px;
+  --oa-radius-button: 6px;
+  --oa-radius-pill: 50px;
+  --oa-shadow: 0 12px 32px rgba(28, 28, 34, 0.08);
+
+  /* Spacing */
+  --oa-space-1: 4px;
+  --oa-space-2: 8px;
+  --oa-space-3: 12px;
+  --oa-space-4: 16px;
+  --oa-space-5: 24px;
+  --oa-space-6: 32px;
+  --oa-space-7: 48px;
+  --oa-space-8: 64px;
+
+  --oa-max-width: 960px;
+}

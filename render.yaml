@@ -1,0 +1,55 @@
+# Render Blueprint (PLAN Phase 10). One web service, ONE instance: rate limits, the AI daily cap
+# and the audit cache live in memory, so scaling out would split them.
+services:
+  - type: web
+    name: offshorly-audit
+    runtime: node
+    plan: starter            # no sleep on idle (the free plan adds ~50 s to the first audit)
+    region: frankfurt        # closest Render region to the UK; change before first deploy if needed
+    numInstances: 1
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start  # sets NODE_ENV=production
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.1
+      # --- Secrets: set in the dashboard (never committed) ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PAGESPEED_API_KEY
+        sync: false
+      # Dormant: leave empty (module targets a retired feed shape; see README "Wordfence (dormant)").
+      - key: WORDFENCE_API_KEY
+        sync: false
+      - key: LEAD_WEBHOOK_URL
+        sync: false
+      # --- AI ---
+      # Empty = live when ANTHROPIC_API_KEY is set, otherwise off. fixture refuses to start here.
+      - key: AI_MODE
+        sync: false
+      - key: AUDIT_MODEL
+        sync: false
+      # --- Origins and embedding ---
+      # e.g. https://audit.offshorly.com once the custom domain exists; until then the onrender.com URL.
+      - key: PUBLIC_ORIGIN
+        sync: false
+      - key: ALLOWED_FRAME_ANCESTORS
+        value: https://offshorly.com https://www.offshorly.com
+      # --- Limits ---
+      - key: RATE_LIMIT_HOURLY
+        value: "5"
+      - key: RATE_LIMIT_DAILY
+        value: "20"
+      - key: DAILY_AI_AUDITS
+        value: "50"         # until live usage gives real cost numbers
+      - key: MAX_CONCURRENT_AUDITS
+        value: "4"
+      - key: CACHE_TTL_MIN
+        value: "360"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      # --- Optional ---
+      - key: TYPEKIT_KIT_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: info

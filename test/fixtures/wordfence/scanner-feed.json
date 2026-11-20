@@ -1,0 +1,96 @@
+{
+  "11111111-1111-4111-8111-111111111111": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "title": "Fixture issue A",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Contact Form 7",
+        "slug": "contact-form-7",
+        "affected_versions": {
+          "* - 5.8.3": { "from_version": "*", "from_inclusive": true, "to_version": "5.8.3", "to_inclusive": true }
+        },
+        "patched": true,
+        "patched_versions": ["5.8.4"]
+      }
+    ],
+    "informational": false,
+    "cvss": { "vector": "CVSS:3.1/AV:N", "score": 6.1, "rating": "Medium" },
+    "cve": "CVE-0000-0001"
+  },
+  "22222222-2222-4222-8222-222222222222": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "title": "Fixture issue B {with braces} and \"quotes\"",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Elementor",
+        "slug": "elementor",
+        "affected_versions": {
+          "3.0.0 - 3.18.0": { "from_version": "3.0.0", "from_inclusive": true, "to_version": "3.18.0", "to_inclusive": false }
+        },
+        "patched": true,
+        "patched_versions": ["3.18.0"]
+      }
+    ],
+    "informational": false,
+    "cvss": { "vector": "CVSS:3.1/AV:N", "score": 8.8, "rating": "High" },
+    "cve": "CVE-0000-0002"
+  },
+  "33333333-3333-4333-8333-333333333333": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "title": "Fixture issue C",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Elementor",
+        "slug": "elementor",
+        "affected_versions": {
+          "3.17.0 - 3.18.0": { "from_version": "3.17.0", "from_inclusive": false, "to_version": "3.18.0", "to_inclusive": true }
+        },
+        "patched": false,
+        "patched_versions": []
+      }
+    ],
+    "informational": false,
+    "cvss": { "vector": "CVSS:3.1/AV:N", "score": 9.8, "rating": "Critical" },
+    "cve": null
+  },
+  "44444444-4444-4444-8444-444444444444": {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "title": "Fixture informational",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Elementor",
+        "slug": "elementor",
+        "affected_versions": {
+          "* - *": { "from_version": "*", "from_inclusive": true, "to_version": "*", "to_inclusive": true }
+        },
+        "patched": false,
+        "patched_versions": []
+      }
+    ],
+    "informational": true,
+    "cvss": null
+  },
+  "55555555-5555-4555-8555-555555555555": {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "title": "Fixture core issue",
+    "software": [
+      {
+        "type": "core",
+        "name": "WordPress Core",
+        "slug": "wordpress",
+        "affected_versions": {
+          "6.4 - 6.4.2": { "from_version": "6.4", "from_inclusive": true, "to_version": "6.4.2", "to_inclusive": true }
+        },
+        "patched": true,
+        "patched_versions": ["6.4.3"]
+      }
+    ],
+    "informational": false,
+    "cvss": { "vector": "CVSS:3.1/AV:N", "score": 4.3, "rating": "Low" },
+    "cve": "CVE-0000-0005"
+  }
+}

@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  Local embed test. Serve this file from a different port to the tool, e.g.
+    npx vite --port 5173                       (tool, or npm run dev)
+    npx serve scripts -l 5500                  (or: python3 -m http.server 5500 -d scripts)
+  then open http://localhost:5500/embed-test.html
+  Change TOOL below if the tool runs elsewhere. In dev, add ?mock=1 handling by editing the
+  iframe src in DevTools, or point TOOL at a server with fixture AI.
+-->
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embed test: Offshorly audit</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #fff; color: #2f3037; }
+      header, footer { background: #1c1c22; color: #fff; padding: 24px; }
+      main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
+      .filler { height: 400px; background: #f9f9fe; border: 1px dashed #dfe1e5; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 24px 0; }
+    </style>
+  </head>
+  <body>
+    <header>Host page header (simulates offshorly.com)</header>
+    <main>
+      <h1>Embedded audit</h1>
+      <div class="filler">Content above the widget</div>
+      <div data-offshorly-audit></div>
+      <div class="filler">Content below the widget: should move as the iframe resizes</div>
+    </main>
+    <footer>Host page footer</footer>
+    <script>
+      // Point at the tool's origin. embed.js derives the tool origin from its own src.
+      var TOOL = 'http://localhost:5173';
+      var s = document.createElement('script');
+      s.src = TOOL + '/embed.js';
+      s.async = true;
+      document.body.appendChild(s);
+      // Dev only: open this page with ?mock=1 (optionally &case=…&autorun=example.com) to
+      // point the iframe at the tool's mock API.
+      s.onload = function () {
+        if (!/[?&]mock=1/.test(location.search)) return;
+        var f = document.querySelector('[data-offshorly-audit] iframe');
+        if (f) f.src = TOOL + '/' + location.search + '&embed=1';
+      };
+    </script>
+    <noscript>
+      <iframe src="http://localhost:5173/?embed=1" title="Website and AI audit" style="width:100%;min-height:720px;border:0"></iframe>
+    </noscript>
+  </body>
+</html>
