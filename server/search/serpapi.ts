@@ -5,8 +5,12 @@
 //   There is no documented `num` parameter: none is sent; the first N organic results are kept.
 //   Results: organic_results[] with position, title, link, displayed_link, snippet.
 //   Errors: JSON {"error": "..."} with 400/401/403/404/410/429 (hourly throughput or out of
-//   searches)/500/503. "No results" is HTTP 200 with a top-level `error` string and
-//   organic_results possibly absent: treated as an empty list, not a failure.
+//   searches)/500/503. "No results" is HTTP 200 with a top-level `error` string ("Google hasn't
+//   returned any results for this query.") and organic_results absent: treated as an empty list.
+//   Any other `error` string on a 200 without organic_results is SearchError('provider_error');
+//   when organic_results is present, `error` is ignored. The "no results" message match is taken
+//   from the docs and should be confirmed against a real response once the account exists.
+//   The error string itself is never logged or put in the SearchError (it can carry a URL).
 //   Identical queries within an hour are served from SerpApi's cache for free: `no_cache` is
 //   never sent.
 //
@@ -53,11 +57,21 @@ export const readCapped = async (res: Response, max: number): Promise<string> =>
   return Buffer.concat(chunks).toString('utf8');
 };
 
-/** organic_results → hits; tolerant of absent or malformed entries. */
+/** SerpApi's "no results" message (from the docs; to be confirmed against a real response). */
+const NO_RESULTS_ERROR = /hasn['’]?t returned any results/i;
+
+/**
+ * organic_results → hits; tolerant of absent or malformed entries. Without organic_results: the
+ * documented "no results" error → []; any other `error` string → SearchError('provider_error')
+ * (the message is dropped); nothing at all → [].
+ */
 export const parseSerpApi = (data: unknown, num: number): SearchHit[] => {
   if (!data || typeof data !== 'object') throw new SearchError('bad_json');
-  const organic = (data as { organic_results?: unknown }).organic_results;
-  if (!Array.isArray(organic)) return []; // "no results" (200 with a top-level error) or absent
+  const { organic_results: organic, error } = data as { organic_results?: unknown; error?: unknown };
+  if (!Array.isArray(organic)) {
+    if (typeof error === 'string' && !NO_RESULTS_ERROR.test(error)) throw new SearchError('provider_error');
+    return [];
+  }
   const out: SearchHit[] = [];
   for (const r of organic) {
     if (out.length >= num) break;

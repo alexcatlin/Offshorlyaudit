@@ -3,10 +3,24 @@
 // - Queries come from INDUSTRIES[id].searchQueries only: never a visitor's answers, email or the
 //   audited domain. Nothing about the visitor or their site is ever sent to the provider.
 // - Cache key `${provider}:${industryId}:${QUERIES_VERSION}`, TTL SEARCH_CACHE_DAYS; in-flight
-//   de-duplication; a failure is negatively cached for 30 minutes; SEARCH_DAILY_MAX caps provider
-//   requests per UTC day (each run makes two); persisted at SEARCH_CACHE_PATH as one JSON file
-//   (atomic tmp + rename, 0600; corrupt → ignored).
-// - Per audit: wait at most 4 s (RESEARCH_WAIT_MS). A late search still fills the cache.
+//   de-duplication; SEARCH_DAILY_MAX caps provider requests per UTC day (each run makes two; failed
+//   runs count too, no refund); persisted at SEARCH_CACHE_PATH as one JSON file (atomic tmp +
+//   rename, 0600; corrupt → ignored; entries with no results are dropped on load).
+// - Failures: a failed refresh is negatively cached with backoff per industry: 30 min, 2 h, then
+//   6 h for each further consecutive failure; a success (or no_results) resets the streak. A
+//   refresh that succeeds but yields no usable result (and no query failed) is negatively cached
+//   for 24 h with reason no_results and is not written to the cache. A failure with http_401 or
+//   http_403 pauses the provider for every industry for 6 h; http_429 pauses it for the streak's
+//   TTL. While paused, audits get `negative` without a provider call or a daily-counter take.
+// - Timings: an audit waits at most 4 s (RESEARCH_WAIT_MS) and then continues without results; the
+//   refresh is not tied to the audit and keeps running for up to 20 s (SEARCH_TIMEOUT_MS, the
+//   provider request timeout), so a slow provider still fills the cache for later audits. Only a
+//   real provider failure or the 20 s timeout is negatively cached, never the audit's 4 s wait.
+// - Diagnosis: every `industry_research` log line carries `status`, `ms` and, on failure, a
+//   `reason` code (http_<status>, timeout, network, bad_json, too_large, provider_error, error,
+//   no_results, daily_cap, wait_timeout): never a URL, key or response body. Statuses: ok, failed,
+//   capped, wait_timeout, paused (logged once when an account-wide pause is set). The last audit
+//   and refresh outcome per industry is kept in memory for the admin view (reset on restart).
 // - Hygiene: HTML, entities, control and bidi characters stripped; title ≤120, snippet ≤300; URL
 //   http(s), no userinfo, default port, hostname not an IP literal, ≤500 chars; host blocklist
 //   (social, video and pin sites, offshorly.com); one result per host; ≤8 kept. Per audit the
@@ -18,7 +32,7 @@ import { INDUSTRIES, isIndustryId } from '../../shared/industries.js';
 import type { IndustryId } from '../../shared/industries.js';
 import type { IndustryResearchInput, ResearchCache, ResearchSource } from '../ai/types.js';
 import { capChars, stripUrlsAndHtml } from '../ai/text.js';
-import { DailyCounter, DAY, MINUTE } from '../http/limits.js';
+import { DailyCounter, DAY, HOUR, MINUTE } from '../http/limits.js';
 import type { Clock } from '../http/limits.js';
 import { SearchError } from './types.js';
 import type { SearchHit, SearchProvider } from './types.js';
@@ -27,11 +41,20 @@ import type { SearchHit, SearchProvider } from './types.js';
 export const QUERIES_VERSION = 1;
 /** Longest an audit waits for research before calling the model without it. */
 export const RESEARCH_WAIT_MS = 4_000;
-/** Provider request timeout (both queries share it). */
-export const SEARCH_TIMEOUT_MS = 4_000;
+/**
+ * Provider request timeout (both queries share it). Deliberately longer than RESEARCH_WAIT_MS:
+ * uncached Google searches often take more than 4 s, and a late answer must still fill the cache.
+ */
+export const SEARCH_TIMEOUT_MS = 20_000;
 export const RESULTS_PER_QUERY = 6;
 export const MAX_RESULTS = 8;
-export const NEGATIVE_TTL_MS = 30 * MINUTE;
+/** Negative-cache TTL by consecutive failure count (1st, 2nd, 3rd and later). */
+export const NEGATIVE_TTLS_MS: readonly number[] = [30 * MINUTE, 2 * HOUR, 6 * HOUR];
+export const NEGATIVE_TTL_MS = NEGATIVE_TTLS_MS[0]!;
+/** A refresh that succeeded with no usable result is not retried for this long. */
+export const NO_RESULTS_TTL_MS = 24 * HOUR;
+/** Account-wide pause after http_401 / http_403 (bad or disabled key). */
+export const AUTH_PAUSE_MS = 6 * HOUR;
 export const TITLE_MAX = 120;
 export const SNIPPET_MAX = 300;
 export const URL_MAX = 500;
@@ -81,12 +104,29 @@ export interface ResearchListing {
   results: { title: string; domain: string; url: string }[];
 }
 
+/** Last outcome per industry (admin): why research is, or is not, there. No URL, key or body. */
+export interface ResearchOutcome {
+  industryId: IndustryId;
+  /** The last audit that asked for this industry. */
+  lastAudit: { cache: ResearchCache; at: string } | null;
+  /** The last provider refresh that finished. `reason` is null on success. */
+  lastRefresh: { status: 'ok' | 'failed'; reason: string | null; results: number; ms: number; at: string } | null;
+  /** Set while a failure is negatively cached. */
+  negativeUntil: string | null;
+  /** A refresh is running now. */
+  inflight: boolean;
+}
+
 export interface IndustryResearch {
   readonly provider: SearchProvider['name'];
   /** Never rejects. `research.sources` is empty when nothing usable came back in time. */
   forAudit(industryId: IndustryId | null, opts: { auditedDomain: string }): Promise<IndustryResearchInput>;
   /** Cached entries (admin). */
   list(): ResearchListing[];
+  /** Last outcome per industry asked for since start (admin). */
+  outcomes(): ResearchOutcome[];
+  /** ISO time until which the provider is paused for every industry; null when not paused (admin). */
+  pausedUntil(): string | null;
   /** Waits for a pending cache write. */
   close(): Promise<void>;
 }
@@ -179,12 +219,18 @@ const parseEntry = (v: unknown, provider: string, now: number): [string, Entry] 
   if (o.key !== key) return null;
   // Re-clean on load: the file is ours, but the rules may have tightened since it was written.
   const results = cleanHits(o.results as SearchHit[]);
+  // An empty entry (written before no_results existed) would block a refresh for the whole TTL.
+  if (!results.length) return null;
   return [key, { industryId: o.industryId, fetchedAt: o.fetchedAt, expiresAt: o.expiresAt, results }];
 };
 
 export const cacheKey = (provider: string, industryId: IndustryId): string => `${provider}:${industryId}:${QUERIES_VERSION}`;
 
-const reasonOf = (e: unknown): string => (e instanceof SearchError ? String(e.reason) : 'error');
+/** A loggable reason code: http_<status>, timeout, network, bad_json, too_large, provider_error or error. */
+export const reasonOf = (e: unknown): string => {
+  if (!(e instanceof SearchError)) return 'error';
+  return typeof e.reason === 'number' ? `http_${e.reason}` : e.reason;
+};
 
 export const createIndustryResearch = async (opts: ResearchOptions): Promise<IndustryResearch> => {
   const provider = opts.provider;
@@ -196,7 +242,13 @@ export const createIndustryResearch = async (opts: ResearchOptions): Promise<Ind
   const daily = new DailyCounter(opts.dailyMax, now);
   const cache = new Map<string, Entry>();
   const negative = new Map<string, number>();
+  /** Consecutive failed refreshes per cache key (backoff index). */
+  const failStreak = new Map<string, number>();
+  /** Account-wide: no provider call before this time (after 401/403/429). */
+  let pausedUntil = 0;
   const inflight = new Map<string, Promise<Entry | null>>();
+  const lastAudit = new Map<IndustryId, NonNullable<ResearchOutcome['lastAudit']>>();
+  const lastRefresh = new Map<IndustryId, NonNullable<ResearchOutcome['lastRefresh']>>();
   let path = opts.path ?? null;
   let writes: Promise<void> = Promise.resolve();
 
@@ -236,28 +288,74 @@ export const createIndustryResearch = async (opts: ResearchOptions): Promise<Ind
       .catch((e: unknown) => log('error', 'search cache write failed', { error: (e as { code?: string }).code ?? 'error' }));
   };
 
+  /** Records a failed refresh (call after logging it): backoff, and an account-wide pause on 401/403/429. */
+  const failRefresh = (industryId: IndustryId, key: string, reason: string, ms: number) => {
+    const t = now();
+    const streak = (failStreak.get(key) ?? 0) + 1;
+    failStreak.set(key, streak);
+    const ttl = NEGATIVE_TTLS_MS[Math.min(streak - 1, NEGATIVE_TTLS_MS.length - 1)]!;
+    negative.set(key, t + ttl);
+    lastRefresh.set(industryId, { status: 'failed', reason, results: 0, ms, at: new Date(t).toISOString() });
+    const pauseMs = reason === 'http_401' || reason === 'http_403' ? AUTH_PAUSE_MS : reason === 'http_429' ? ttl : 0;
+    if (pauseMs && t + pauseMs > pausedUntil) {
+      pausedUntil = t + pauseMs;
+      log('warn', 'industry_research', { industryId, provider: provider.name, status: 'paused', reason, ms: 0 });
+    }
+  };
+
+  // Runs to completion whether or not any audit is still waiting: it is never tied to an audit.
   const fetchFresh = async (industryId: IndustryId, key: string): Promise<Entry | null> => {
     const started = now();
-    const signal = AbortSignal.timeout(timeoutMs);
+    // A timer (not AbortSignal.timeout) so the refresh always settles by timeoutMs, even if a
+    // provider ignored the signal.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    timer.unref?.();
+    const timedOut = new Promise<never>((_, reject) => {
+      ac.signal.addEventListener('abort', () => reject(new SearchError('timeout')), { once: true });
+    });
+    timedOut.catch(() => undefined);
     const queries = INDUSTRIES[industryId].searchQueries;
-    const settled = await Promise.allSettled(
-      queries.map((q) => provider.search(q, { num: RESULTS_PER_QUERY, country: 'gb', lang: 'en', signal })),
-    );
+    let settled: PromiseSettledResult<SearchHit[]>[];
+    try {
+      // Each query settles on its own: one failing never aborts or discards the other.
+      settled = await Promise.allSettled(
+        queries.map((q) =>
+          Promise.race([provider.search(q, { num: RESULTS_PER_QUERY, country: 'gb', lang: 'en', signal: ac.signal }), timedOut]),
+        ),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
     const ok = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
     const failed = settled.flatMap((s) => (s.status === 'rejected' ? [reasonOf(s.reason)] : []));
     const ms = Math.round(now() - started);
-    if (!ok.length) {
-      negative.set(key, now() + NEGATIVE_TTL_MS);
-      log('warn', 'industry_research', { industryId, provider: provider.name, status: 'failed', reasons: failed, ms });
-      return null;
-    }
     // First query's results first, then the second's.
     const results = cleanHits(ok.flat());
+    if (!results.length && failed.length) {
+      // Nothing usable and a query failed: the failure is the cause (all failed, or one failed and
+      // the other came back empty). Backoff applies.
+      const reason = failed[0]!;
+      log('warn', 'industry_research', { industryId, provider: provider.name, status: 'failed', reason, reasons: failed, ms });
+      failRefresh(industryId, key, reason, ms);
+      return null;
+    }
     const t = now();
+    if (!results.length) {
+      // Every query succeeded with nothing usable: not cached (an empty entry would hide the
+      // industry for the whole cache TTL), not a provider fault, retried after 24 h.
+      negative.set(key, t + NO_RESULTS_TTL_MS);
+      failStreak.delete(key);
+      lastRefresh.set(industryId, { status: 'failed', reason: 'no_results', results: 0, ms, at: new Date(t).toISOString() });
+      log('warn', 'industry_research', { industryId, provider: provider.name, status: 'failed', reason: 'no_results', ms });
+      return null;
+    }
     const entry: Entry = { industryId, fetchedAt: t, expiresAt: t + ttlMs, results };
     cache.set(key, entry);
     negative.delete(key);
+    failStreak.delete(key);
     persist();
+    lastRefresh.set(industryId, { status: 'ok', reason: null, results: results.length, ms, at: new Date(t).toISOString() });
     log('info', 'industry_research', {
       industryId,
       provider: provider.name,
@@ -284,34 +382,68 @@ export const createIndustryResearch = async (opts: ResearchOptions): Promise<Ind
     return Promise.race([p, late]).finally(() => clearTimeout(timer));
   };
 
+  const forAudit = async (industryId: IndustryId, auditedDomain: string): Promise<IndustryResearchInput> => {
+    const key = cacheKey(provider.name, industryId);
+    const t = now();
+    const hit = cache.get(key);
+    if (hit && hit.expiresAt > t) return outcome(industryId, 'hit', hit, auditedDomain);
+    if (hit) cache.delete(key);
+    const neg = negative.get(key);
+    if (neg !== undefined && neg > t) return outcome(industryId, 'negative', null, auditedDomain);
+    // Account paused (bad key or rate limited): no provider call, nothing taken from the counter.
+    if (t < pausedUntil) return outcome(industryId, 'negative', null, auditedDomain);
+    let p = inflight.get(key);
+    if (!p) {
+      if (!daily.tryTake(INDUSTRIES[industryId].searchQueries.length)) {
+        log('warn', 'industry_research', { industryId, provider: provider.name, status: 'capped', reason: 'daily_cap', ms: 0 });
+        return outcome(industryId, 'capped', null, auditedDomain);
+      }
+      const started = now();
+      p = fetchFresh(industryId, key)
+        .catch(() => {
+          // Unexpected (fetchFresh handles provider errors itself): still a refresh failure.
+          const ms = Math.round(now() - started);
+          log('error', 'industry_research', { industryId, provider: provider.name, status: 'failed', reason: 'error', ms });
+          failRefresh(industryId, key, 'error', ms);
+          return null;
+        })
+        .finally(() => inflight.delete(key));
+      inflight.set(key, p);
+    }
+    const r = await waitFor(p);
+    if (r === 'timeout') {
+      // The audit stops waiting; the refresh carries on and is not negatively cached.
+      log('info', 'industry_research', { industryId, provider: provider.name, status: 'wait_timeout', reason: 'wait_timeout', ms: waitMs });
+      return outcome(industryId, 'timeout', null, auditedDomain);
+    }
+    return r ? outcome(industryId, 'miss', r, auditedDomain) : outcome(industryId, 'error', null, auditedDomain);
+  };
+
   return {
     provider: provider.name,
     async forAudit(industryId, { auditedDomain }) {
       if (!industryId) return outcome(null, 'none', null, auditedDomain);
-      const key = cacheKey(provider.name, industryId);
+      const out = await forAudit(industryId, auditedDomain);
+      lastAudit.set(industryId, { cache: out.cache, at: new Date(now()).toISOString() });
+      return out;
+    },
+    outcomes() {
       const t = now();
-      const hit = cache.get(key);
-      if (hit && hit.expiresAt > t) return outcome(industryId, 'hit', hit, auditedDomain);
-      if (hit) cache.delete(key);
-      const neg = negative.get(key);
-      if (neg !== undefined && neg > t) return outcome(industryId, 'negative', null, auditedDomain);
-      let p = inflight.get(key);
-      if (!p) {
-        if (!daily.tryTake(INDUSTRIES[industryId].searchQueries.length)) {
-          log('warn', 'industry_research', { industryId, provider: provider.name, status: 'capped' });
-          return outcome(industryId, 'capped', null, auditedDomain);
-        }
-        p = fetchFresh(industryId, key)
-          .catch(() => {
-            negative.set(key, now() + NEGATIVE_TTL_MS);
-            return null;
-          })
-          .finally(() => inflight.delete(key));
-        inflight.set(key, p);
-      }
-      const r = await waitFor(p);
-      if (r === 'timeout') return outcome(industryId, 'timeout', null, auditedDomain);
-      return r ? outcome(industryId, 'miss', r, auditedDomain) : outcome(industryId, 'error', null, auditedDomain);
+      const ids = new Set<IndustryId>([...lastAudit.keys(), ...lastRefresh.keys()]);
+      return [...ids].map((industryId) => {
+        const key = cacheKey(provider.name, industryId);
+        const neg = negative.get(key);
+        return {
+          industryId,
+          lastAudit: lastAudit.get(industryId) ?? null,
+          lastRefresh: lastRefresh.get(industryId) ?? null,
+          negativeUntil: neg !== undefined && neg > t ? new Date(neg).toISOString() : null,
+          inflight: inflight.has(key),
+        };
+      });
+    },
+    pausedUntil() {
+      return now() < pausedUntil ? new Date(pausedUntil).toISOString() : null;
     },
     list() {
       const t = now();

@@ -3,9 +3,9 @@
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { INDUSTRIES, INDUSTRY_IDS } from '../../shared/industries.js';
-import { DAY, MINUTE } from '../../server/http/limits.js';
+import { DAY, HOUR, MINUTE } from '../../server/http/limits.js';
 import { CLASSIFIER_EXCLUDED, guessIndustry, industryHits, industryMatches } from '../../server/search/classify.js';
 import { createFixtureSearchProvider, FIXTURE_HITS } from '../../server/search/fixture.js';
 import {
@@ -13,9 +13,15 @@ import {
   cleanHits,
   createIndustryResearch,
   isBlockedHost,
+  AUTH_PAUSE_MS,
   MAX_RESULTS,
   NEGATIVE_TTL_MS,
+  NEGATIVE_TTLS_MS,
+  NO_RESULTS_TTL_MS,
   QUERIES_VERSION,
+  RESEARCH_WAIT_MS,
+  reasonOf,
+  SEARCH_TIMEOUT_MS,
   safeResultUrl,
   sourcesForAudit,
 } from '../../server/search/industryResearch.js';
@@ -25,7 +31,7 @@ import type { SearchFetch } from '../../server/search/serpapi.js';
 import { SearchError } from '../../server/search/types.js';
 import type { SearchHit, SearchOptions, SearchProvider } from '../../server/search/types.js';
 import type { FetchedPage } from '../../server/site/types.js';
-import { SERPAPI_BAD_KEY, SERPAPI_NO_RESULTS, SERPAPI_OK } from '../fixtures/serpapi.js';
+import { SERPAPI_200_UNKNOWN_ERROR, SERPAPI_BAD_KEY, SERPAPI_NO_RESULTS, SERPAPI_OK, SERPAPI_RESULTS_WITH_ERROR } from '../fixtures/serpapi.js';
 
 const page = (over: Partial<FetchedPage> = {}): FetchedPage => ({ url: 'https://a.example/', label: 'Homepage', title: '', description: '', text: '', ...over });
 
@@ -269,7 +275,7 @@ describe('industryResearch', () => {
     t += NEGATIVE_TTL_MS + 1;
     expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
     expect(p.queries).toHaveLength(4);
-    expect(JSON.stringify(logs)).toContain('"reasons":["429","429"]');
+    expect(JSON.stringify(logs)).toContain('"reason":"http_429","reasons":["http_429","http_429"]');
     expect(NEGATIVE_TTL_MS).toBe(30 * MINUTE);
   });
 
@@ -360,6 +366,333 @@ describe('industryResearch', () => {
     const b = await r.forAudit('legal', { auditedDomain: 'third.example' });
     expect(b.sources.map((s) => s.domain)).toEqual(['acme.example', 'other.example']);
   });
+
+  it('results empty only after removing the audited domain: still a cache hit', async () => {
+    const p = fakeProvider(async () => [hit('acme.example')]);
+    const r = await research(p.provider);
+    expect((await r.forAudit('legal', { auditedDomain: 'other.example' })).cache).toBe('miss');
+    expect(await r.forAudit('legal', { auditedDomain: 'acme.example' })).toMatchObject({ cache: 'hit', sources: [] });
+    expect(p.queries).toHaveLength(2);
+  });
+
+  it('empty cache entries are dropped on load; non-empty ones kept', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-search-'));
+    const path = join(dir, 'search-cache.json');
+    const t = Date.now();
+    const entry = (industryId: string, results: SearchHit[]) => ({ key: `serpapi:${industryId}:${QUERIES_VERSION}`, industryId, fetchedAt: t, expiresAt: t + DAY, results });
+    writeFileSync(
+      path,
+      JSON.stringify({ v: 1, entries: [entry('legal', []), entry('insurance', [hit('kept.example')]), entry('accounting', [hit('www.facebook.com')])] }),
+    );
+    const logs: Record<string, unknown>[] = [];
+    const p = fakeProvider();
+    const r = await research(p.provider, { path, log: (_l, msg, extra) => logs.push({ msg, ...extra }) });
+    expect(logs).toContainEqual({ msg: 'search cache loaded', entries: 1 });
+    expect(r.list().map((e) => e.industryId)).toEqual(['insurance']);
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('miss');
+  });
+});
+
+// ---------- No results, backoff and the account-wide pause ----------
+
+describe('industryResearch failures: no_results, backoff, pause', () => {
+  const clock = (start = Date.parse('2026-11-20T10:00:00Z')) => {
+    const c = { t: start, now: () => c.t };
+    return c;
+  };
+  const recorder = () => {
+    const logs: Record<string, unknown>[] = [];
+    const log: ResearchLog = (level, msg, extra) => logs.push({ level, msg, ...extra });
+    return { logs, log };
+  };
+  const negativeIn = (r: Awaited<ReturnType<typeof research>>, t: number, industryId = 'legal') => {
+    const o = r.outcomes().find((x) => x.industryId === industryId);
+    return o?.negativeUntil ? Date.parse(o.negativeUntil) - t : null;
+  };
+
+  it('schedule constants', () => {
+    expect(NEGATIVE_TTLS_MS).toEqual([30 * MINUTE, 2 * HOUR, 6 * HOUR]);
+    expect(NEGATIVE_TTL_MS).toBe(30 * MINUTE);
+    expect(NO_RESULTS_TTL_MS).toBe(24 * HOUR);
+    expect(AUTH_PAUSE_MS).toBe(6 * HOUR);
+  });
+
+  it('SerpApi "no results" on both queries → no_results, negative for 24 h, nothing cached or persisted', async () => {
+    const c = clock();
+    const { logs, log } = recorder();
+    const s = serp(200, SERPAPI_NO_RESULTS);
+    const dir = mkdtempSync(join(tmpdir(), 'oa-search-'));
+    const path = join(dir, 'search-cache.json');
+    const r = await createIndustryResearch({ provider: s.provider, ttlDays: 7, dailyMax: 100, now: c.now, log, path });
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    await r.close();
+    expect(s.calls).toHaveLength(2);
+    expect(r.list()).toEqual([]);
+    expect(() => statSync(path)).toThrow();
+    expect(r.outcomes()[0]).toMatchObject({ lastRefresh: { status: 'failed', reason: 'no_results', results: 0 } });
+    expect(negativeIn(r, c.t)).toBe(NO_RESULTS_TTL_MS);
+    expect(r.pausedUntil()).toBeNull();
+    expect(logs).toContainEqual(expect.objectContaining({ msg: 'industry_research', status: 'failed', reason: 'no_results', ms: 0 }));
+
+    c.t += NO_RESULTS_TTL_MS - 1;
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    expect(s.calls).toHaveLength(2);
+    c.t += 2;
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    expect(s.calls).toHaveLength(4);
+  });
+
+  it('no_results resets the failure streak', async () => {
+    const c = clock();
+    let mode: 'fail' | 'empty' = 'fail';
+    const p = fakeProvider(async () => {
+      if (mode === 'fail') throw new SearchError(503);
+      return [];
+    });
+    const r = await research(p.provider, { now: c.now });
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    c.t += NEGATIVE_TTLS_MS[0]! + 1;
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(negativeIn(r, c.t)).toBe(NEGATIVE_TTLS_MS[1]);
+    c.t += NEGATIVE_TTLS_MS[1]! + 1;
+    mode = 'empty';
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(negativeIn(r, c.t)).toBe(NO_RESULTS_TTL_MS);
+    c.t += NO_RESULTS_TTL_MS + 1;
+    mode = 'fail';
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(negativeIn(r, c.t)).toBe(NEGATIVE_TTLS_MS[0]);
+  });
+
+  it('a 200 with an unknown `error` → provider_error; the message and its URL never reach the error or the logs', async () => {
+    const s = serp(200, SERPAPI_200_UNKNOWN_ERROR);
+    const err = await s.provider.search('q', opts()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SearchError);
+    expect((err as SearchError).reason).toBe('provider_error');
+    expect(`${String(err)} ${(err as Error).stack ?? ''} ${JSON.stringify(err)}`).not.toMatch(/https?:\/\/|leak|went wrong/);
+
+    const { logs, log } = recorder();
+    const r = await createIndustryResearch({ provider: serp(200, SERPAPI_200_UNKNOWN_ERROR).provider, ttlDays: 7, dailyMax: 10, log });
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    expect(r.outcomes()[0]).toMatchObject({ lastRefresh: { status: 'failed', reason: 'provider_error' } });
+    const text = JSON.stringify(logs);
+    expect(text).toContain('"reason":"provider_error"');
+    expect(text).not.toMatch(/https?:\/\//);
+    expect(text).not.toContain('leak');
+  });
+
+  it('0 cleaned results with one query failed → the failed reason and backoff, not no_results', async () => {
+    const c = clock();
+    const { logs, log } = recorder();
+    const p = fakeProvider(async (q) => {
+      if (q === INDUSTRIES.legal.searchQueries[0]) throw new SearchError(503);
+      return [hit('www.youtube.com')]; // blocked → nothing usable
+    });
+    const r = await research(p.provider, { now: c.now, log });
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    expect(r.outcomes()[0]).toMatchObject({ lastRefresh: { status: 'failed', reason: 'http_503' } });
+    expect(negativeIn(r, c.t)).toBe(NEGATIVE_TTLS_MS[0]);
+    expect(logs).toContainEqual(expect.objectContaining({ status: 'failed', reason: 'http_503', reasons: ['http_503'] }));
+    expect(logs.some((l) => l.reason === 'no_results')).toBe(false);
+    c.t += NEGATIVE_TTLS_MS[0]! + 1;
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(negativeIn(r, c.t)).toBe(NEGATIVE_TTLS_MS[1]);
+  });
+
+  it('backoff: 30 min, 2 h, 6 h, 6 h; reset after a success', async () => {
+    const c = clock();
+    let fail = true;
+    const p = fakeProvider(async (q) => {
+      if (fail) throw new SearchError(503);
+      return [hit(`${q.length}.example`)];
+    });
+    const r = await research(p.provider, { now: c.now, ttlDays: 7 });
+    const seen: (number | null)[] = [];
+    for (let i = 0; i < 4; i++) {
+      expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+      const ttl = negativeIn(r, c.t);
+      seen.push(ttl);
+      c.t += (ttl ?? 0) - 1;
+      expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('negative');
+      c.t += 2;
+    }
+    expect(seen).toEqual([30 * MINUTE, 2 * HOUR, 6 * HOUR, 6 * HOUR]);
+    expect(p.queries).toHaveLength(8);
+    expect(r.pausedUntil()).toBeNull(); // 503 never pauses
+
+    fail = false;
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('miss');
+    expect(negativeIn(r, c.t)).toBeNull();
+    c.t += 7 * DAY + 1;
+    fail = true;
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    expect(negativeIn(r, c.t)).toBe(30 * MINUTE);
+  });
+
+  it('a 401 pauses every industry for 6 h: no provider call and nothing taken from the daily counter', async () => {
+    const c = clock();
+    const { logs, log } = recorder();
+    let fail = true;
+    const p = fakeProvider(async (q) => {
+      if (fail) throw new SearchError(401);
+      return [hit(`${q.length}.example`)];
+    });
+    // 4 requests a day: the failed legal run takes 2 (no refund); exactly one more run fits.
+    const r = await research(p.provider, { now: c.now, log, dailyMax: 4 });
+    const start = c.t;
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('error');
+    expect(r.pausedUntil()).toBe(new Date(start + AUTH_PAUSE_MS).toISOString());
+    expect(logs.filter((l) => l.status === 'paused')).toEqual([
+      expect.objectContaining({ msg: 'industry_research', status: 'paused', reason: 'http_401', ms: 0 }),
+    ]);
+    expect(p.queries).toHaveLength(2);
+
+    fail = false;
+    expect((await r.forAudit('insurance', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    c.t = start + AUTH_PAUSE_MS - 1;
+    expect((await r.forAudit('insurance', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    expect((await r.forAudit('accounting', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    expect(p.queries).toHaveLength(2);
+    expect(r.outcomes().find((o) => o.industryId === 'insurance')).toMatchObject({ lastAudit: { cache: 'negative' }, lastRefresh: null });
+
+    c.t = start + AUTH_PAUSE_MS + 1;
+    expect(r.pausedUntil()).toBeNull();
+    expect((await r.forAudit('insurance', { auditedDomain: 'a.example' })).cache).toBe('miss');
+    expect(p.queries).toHaveLength(4);
+    // The paused audits took nothing: the counter is now exactly full.
+    expect((await r.forAudit('accounting', { auditedDomain: 'a.example' })).cache).toBe('capped');
+  });
+
+  it('a 403 pauses for 6 h too', async () => {
+    const c = clock();
+    const p = fakeProvider(async () => {
+      throw new SearchError(403);
+    });
+    const r = await research(p.provider, { now: c.now });
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(r.pausedUntil()).toBe(new Date(c.t + AUTH_PAUSE_MS).toISOString());
+  });
+
+  it('a 429 pause follows the streak (30 min, then 2 h)', async () => {
+    const c = clock();
+    const { logs, log } = recorder();
+    const p = fakeProvider(async () => {
+      throw new SearchError(429);
+    });
+    const r = await research(p.provider, { now: c.now, log });
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(r.pausedUntil()).toBe(new Date(c.t + 30 * MINUTE).toISOString());
+    expect((await r.forAudit('insurance', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    expect(p.queries).toHaveLength(2);
+
+    c.t += 30 * MINUTE + 1;
+    expect(r.pausedUntil()).toBeNull();
+    await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(r.pausedUntil()).toBe(new Date(c.t + 2 * HOUR).toISOString());
+    expect(p.queries).toHaveLength(4);
+    expect(logs.filter((l) => l.status === 'paused')).toHaveLength(2);
+  });
+});
+
+// ---------- Timings: the audit's 4 s wait vs the provider's 20 s timeout (fake timers) ----------
+
+describe('industryResearch timings', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const recorder = () => {
+    const logs: Record<string, unknown>[] = [];
+    const log: ResearchLog = (level, msg, extra) => logs.push({ level, msg, ...extra });
+    return { logs, log };
+  };
+
+  it('the wait (4 s) is shorter than the provider timeout (20 s)', () => {
+    expect(RESEARCH_WAIT_MS).toBe(4_000);
+    expect(SEARCH_TIMEOUT_MS).toBe(20_000);
+  });
+
+  it('provider answering at 6 s: first audit times out without a negative entry; the refresh fills the cache; dedupe; then a hit', async () => {
+    vi.useFakeTimers();
+    const { logs, log } = recorder();
+    // Honours the signal like the real adapter: an abort before 6 s would lose the answer.
+    const p = fakeProvider(
+      (q, o) =>
+        new Promise((res, reject) => {
+          setTimeout(() => res([hit(`${q.length}-${q.charCodeAt(0)}.example`)]), 6_000);
+          o.signal.addEventListener('abort', () => reject(new SearchError('timeout')));
+        }),
+    );
+    const r = await research(p.provider, { log });
+
+    const first = r.forAudit('legal', { auditedDomain: 'a.example' });
+    await vi.advanceTimersByTimeAsync(RESEARCH_WAIT_MS);
+    expect(await first).toMatchObject({ cache: 'timeout', sources: [] });
+    expect(r.outcomes()).toEqual([
+      expect.objectContaining({ industryId: 'legal', lastAudit: expect.objectContaining({ cache: 'timeout' }), lastRefresh: null, negativeUntil: null, inflight: true }),
+    ]);
+
+    // A second audit during the refresh joins it: no new provider call.
+    const second = r.forAudit('legal', { auditedDomain: 'b.example' });
+    expect(p.queries).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const got = await second;
+    expect(got.cache).toBe('miss');
+    expect(got.sources.length).toBeGreaterThan(0);
+    expect(p.queries).toHaveLength(2);
+
+    const third = await r.forAudit('legal', { auditedDomain: 'c.example' });
+    expect(third.cache).toBe('hit');
+    expect(third.sources.length).toBeGreaterThan(0);
+    expect(p.queries).toHaveLength(2);
+    expect(r.outcomes()[0]).toMatchObject({ lastAudit: { cache: 'hit' }, lastRefresh: { status: 'ok', reason: null, ms: 6_000 }, negativeUntil: null, inflight: false });
+
+    expect(logs).toContainEqual(expect.objectContaining({ msg: 'industry_research', status: 'wait_timeout', reason: 'wait_timeout', ms: RESEARCH_WAIT_MS }));
+    expect(logs).toContainEqual(expect.objectContaining({ msg: 'industry_research', status: 'ok', ms: 6_000 }));
+    expect(logs.some((l) => l.status === 'failed')).toBe(false);
+  });
+
+  it('provider still silent at 20 s: the refresh fails with reason timeout and only then is negatively cached', async () => {
+    vi.useFakeTimers();
+    const { logs, log } = recorder();
+    const signals: AbortSignal[] = [];
+    // First query honours the signal; the second ignores it (the refresh must still settle).
+    const p = fakeProvider((q, o) => {
+      signals.push(o.signal);
+      if (q === INDUSTRIES.legal.searchQueries[0]) {
+        return new Promise((_, reject) => o.signal.addEventListener('abort', () => reject(new SearchError('timeout'))));
+      }
+      return new Promise(() => undefined);
+    });
+    const r = await research(p.provider, { log });
+
+    const first = r.forAudit('legal', { auditedDomain: 'a.example' });
+    await vi.advanceTimersByTimeAsync(RESEARCH_WAIT_MS);
+    expect((await first).cache).toBe('timeout');
+    expect(r.outcomes()[0]!.negativeUntil).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(SEARCH_TIMEOUT_MS - RESEARCH_WAIT_MS - 1);
+    expect(signals.every((s) => !s.aborted)).toBe(true);
+    expect(r.outcomes()[0]!.inflight).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signals.every((s) => s.aborted)).toBe(true);
+    expect(r.outcomes()[0]).toMatchObject({ lastRefresh: { status: 'failed', reason: 'timeout', ms: SEARCH_TIMEOUT_MS }, inflight: false });
+    expect(r.outcomes()[0]!.negativeUntil).not.toBeNull();
+    expect(logs).toContainEqual(expect.objectContaining({ status: 'failed', reason: 'timeout', reasons: ['timeout', 'timeout'], ms: SEARCH_TIMEOUT_MS }));
+
+    expect((await r.forAudit('legal', { auditedDomain: 'a.example' })).cache).toBe('negative');
+    expect(p.queries).toHaveLength(2);
+  });
+
+  it('reason codes', () => {
+    expect(reasonOf(new SearchError(401))).toBe('http_401');
+    expect(reasonOf(new SearchError(429))).toBe('http_429');
+    expect(reasonOf(new SearchError('timeout'))).toBe('timeout');
+    expect(reasonOf(new SearchError('bad_json'))).toBe('bad_json');
+    expect(reasonOf(new SearchError('network'))).toBe('network');
+    expect(reasonOf(new SearchError('provider_error'))).toBe('provider_error');
+    expect(reasonOf(new Error('https://serpapi.com/search?api_key=x'))).toBe('error');
+  });
 });
 
 // ---------- SerpApi adapter (hand-written fixtures; see test/fixtures/serpapi.ts) ----------
@@ -418,6 +751,16 @@ describe('SerpApi adapter', () => {
     expect(parseSerpApi({ organic_results: 'nope' }, 6)).toEqual([]);
   });
 
+  it('parse rules for `error`: results win; the no-results message → []; another message → provider_error; nothing → []', async () => {
+    expect((await serp(200, SERPAPI_RESULTS_WITH_ERROR).provider.search('q', opts())).length).toBeGreaterThan(0);
+    expect(parseSerpApi({ error: 'Google hasn’t returned any results for this query.' }, 6)).toEqual([]);
+    expect(parseSerpApi({ error: 'Google hasnt returned any results for this query.' }, 6)).toEqual([]);
+    expect(parseSerpApi({ error: 'GOOGLE HASN\'T RETURNED ANY RESULTS' }, 6)).toEqual([]);
+    expect(() => parseSerpApi({ error: 'Your account has run out of searches.' }, 6)).toThrow(SearchError);
+    expect(parseSerpApi({}, 6)).toEqual([]);
+    expect(parseSerpApi({ error: 42 }, 6)).toEqual([]);
+  });
+
   it('errors carry the status only: the key and the URL never appear in the thrown error', async () => {
     for (const status of [400, 401, 403, 404, 410, 429, 500, 503]) {
       const s = serp(status, SERPAPI_BAD_KEY);
@@ -451,14 +794,43 @@ describe('SerpApi adapter', () => {
     expect(await p.search('q', opts()).catch((e: SearchError) => e.reason)).toBe('too_large');
   });
 
+  it('one of the two SerpApi queries failing: results from the other; the shared signal is not aborted; logs carry codes only', async () => {
+    const logs: string[] = [];
+    const signals: AbortSignal[] = [];
+    const fetchImpl: SearchFetch = async (url, init) => {
+      signals.push(init.signal);
+      const q = new URL(url).searchParams.get('q');
+      if (q === INDUSTRIES.legal.searchQueries[0]) return new Response(JSON.stringify(SERPAPI_BAD_KEY), { status: 429 });
+      return new Response(JSON.stringify(SERPAPI_OK), { status: 200 });
+    };
+    const r = await createIndustryResearch({
+      provider: createSerpApiProvider({ apiKey: KEY, fetchImpl }),
+      ttlDays: 7,
+      dailyMax: 10,
+      log: (_l, msg, extra) => logs.push(`${msg} ${JSON.stringify(extra)}`),
+    });
+    const out = await r.forAudit('legal', { auditedDomain: 'a.example' });
+    expect(out.cache).toBe('miss');
+    expect(out.sources.map((s) => s.domain)).toEqual(['legal-news.example', 'guides.example', 'conveyancing.example', 'seventh.example']);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[0]!.aborted).toBe(false);
+    const text = logs.join('\n');
+    expect(text).toContain('"reasons":["http_429"]');
+    expect(text).not.toContain(KEY);
+    expect(text).not.toContain('api_key');
+    expect(text).not.toMatch(/https?:\/\//);
+  });
+
   it('research logs never contain the key when SerpApi fails', async () => {
     const logs: string[] = [];
     const s = serp(401, SERPAPI_BAD_KEY);
     const r = await createIndustryResearch({ provider: s.provider, ttlDays: 7, dailyMax: 10, log: (_l, msg, extra) => logs.push(`${msg} ${JSON.stringify(extra)}`) });
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await r.forAudit('legal', { auditedDomain: 'a.example' });
-    expect(logs.join('\n')).toContain('401');
+    expect(logs.join('\n')).toContain('"reason":"http_401"');
     expect(logs.join('\n')).not.toContain(KEY);
+    expect(logs.join('\n')).not.toMatch(/https?:\/\/|api_key|serpapi\.com/);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });

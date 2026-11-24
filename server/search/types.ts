@@ -29,7 +29,7 @@ export interface SearchProvider {
  * in its query string), never the provider's response body.
  */
 export class SearchError extends Error {
-  constructor(readonly reason: number | 'network' | 'timeout' | 'too_large' | 'bad_json') {
+  constructor(readonly reason: number | 'network' | 'timeout' | 'too_large' | 'bad_json' | 'provider_error') {
     super(`search failed: ${String(reason)}`);
     this.name = 'SearchError';
   }

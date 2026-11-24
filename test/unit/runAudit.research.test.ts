@@ -12,6 +12,7 @@ import { MemoryFeedbackStore } from '../../server/feedback/store.js';
 import { createFixtureSearchProvider } from '../../server/search/fixture.js';
 import { createIndustryResearch } from '../../server/search/industryResearch.js';
 import type { IndustryResearch } from '../../server/search/industryResearch.js';
+import { SearchError } from '../../server/search/types.js';
 import type { SearchProvider } from '../../server/search/types.js';
 import { appConfig, appDeps, auditDeps, homeHtml, ORIGIN, sampleBuyerFit, siteRoutes } from './_appMock.js';
 
@@ -61,6 +62,8 @@ describe('runAudit with search', () => {
           return { industryId: id, cache: 'none', searchedAt: null, sources: [] };
         },
         list: () => [],
+        outcomes: () => [],
+        pausedUntil: () => null,
         close: async () => undefined,
       };
       const run = await runAudit({ url: 'acme.example' }, auditDeps(routes, { ai: recordingEngine().engine, research }));
@@ -100,6 +103,8 @@ describe('runAudit with search', () => {
         throw new Error('boom');
       },
       list: () => [],
+      outcomes: () => [],
+      pausedUntil: () => null,
       close: async () => undefined,
     };
     const run = await runAudit({ url: 'acme.example', industry: 'legal' }, auditDeps(siteRoutes(), { ai: e.engine, research }));
@@ -115,8 +120,8 @@ describe('app with search (fixture provider + fixture AI)', () => {
     app = null;
   });
 
-  const build = async (feedback = new MemoryFeedbackStore(), adminToken: string | null = null) => {
-    const research = await createIndustryResearch({ provider: createFixtureSearchProvider(), ttlDays: 7, dailyMax: 10 });
+  const build = async (feedback = new MemoryFeedbackStore(), adminToken: string | null = null, provider: SearchProvider = createFixtureSearchProvider()) => {
+    const research = await createIndustryResearch({ provider, ttlDays: 7, dailyMax: 10 });
     const base = appDeps();
     return buildApp({
       ...base,
@@ -159,6 +164,27 @@ describe('app with search (fixture provider + fixture AI)', () => {
     const res = await app.inject({ method: 'GET', url: '/api/admin/research', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ provider: 'fixture', entries: [{ industryId: 'legal' }] });
+    // The last outcome per industry: cache state, refresh status and reason code, timestamps.
+    expect(res.json()).toMatchObject({
+      outcomes: [{ industryId: 'legal', lastAudit: { cache: 'miss' }, lastRefresh: { status: 'ok', reason: null, results: 3 }, negativeUntil: null, inflight: false }],
+      pausedUntil: null,
+    });
+  });
+
+  it('GET /api/admin/research shows pausedUntil (ISO) after a 401', async () => {
+    const token = 'admin-token-0123456789abcdefghijklmnop';
+    const unauthorized: SearchProvider = {
+      name: 'serpapi',
+      search: async () => {
+        throw new SearchError(401);
+      },
+    };
+    app = await build(new MemoryFeedbackStore(), token, unauthorized);
+    await app.inject({ method: 'POST', url: '/api/audit', headers: ORIGIN, payload: { url: 'acme.example', email: 'x4@mail.example', industry: 'legal' } });
+    await new Promise((r) => setTimeout(r, 20));
+    const body = (await app.inject({ method: 'GET', url: '/api/admin/research', headers: { authorization: `Bearer ${token}` } })).json<{ pausedUntil: string | null }>();
+    expect(body).toMatchObject({ outcomes: [{ industryId: 'legal', lastRefresh: { status: 'failed', reason: 'http_401' } }] });
+    expect(body.pausedUntil).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('search off: /healthz search false and no research block', async () => {

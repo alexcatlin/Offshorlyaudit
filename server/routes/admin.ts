@@ -3,7 +3,8 @@
 //
 //   GET    /api/admin/feedback.csv        idea feedback, last vote per (session, idea) wins
 //   DELETE /api/admin/share/:shareId      deletion requests for a shared report
-//   GET    /api/admin/research            cached industry search results (Phase 5; 404 when off)
+//   GET    /api/admin/research            cached industry search results and the last audit/refresh
+//                                         outcome per industry with its reason code (Phase 5; 404 when off)
 //
 // Auth: `Authorization: Bearer <token>`, compared with timingSafeEqual over sha256 digests
 // (equal lengths, no early exit). Limited to 10 requests per IP per hour, counted before the
@@ -65,7 +66,12 @@ export const registerAdminRoutes = (app: FastifyInstance, deps: AdminRouteDeps):
   app.get('/api/admin/research', async (req, reply) => {
     if (!guard(req, reply)) return reply;
     if (!deps.research) return sendError(reply, 404, { code: 'not_found', error: 'Not found.' });
-    return reply.send({ provider: deps.research.provider, entries: deps.research.list() });
+    return reply.send({
+      provider: deps.research.provider,
+      entries: deps.research.list(),
+      outcomes: deps.research.outcomes(),
+      pausedUntil: deps.research.pausedUntil(),
+    });
   });
 
   app.delete<{ Params: { shareId: string } }>('/api/admin/share/:shareId', async (req, reply) => {

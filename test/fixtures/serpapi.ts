@@ -60,3 +60,15 @@ export const SERPAPI_NO_RESULTS = {
 
 /** HTTP 401 body. */
 export const SERPAPI_BAD_KEY = { error: 'Invalid API key. Your API key should be here: https://serpapi.com/manage-api-key' };
+
+/** HTTP 200 with an `error` that is not "no results" (hand-written; message carries a URL on purpose). */
+export const SERPAPI_200_UNKNOWN_ERROR = {
+  search_metadata: { id: '000000000000000000000002', status: 'Error' },
+  error: 'Something went wrong, see https://serpapi.com/search?api_key=leak for details.',
+};
+
+/** HTTP 200 with organic_results and an `error` field: the results win, the error is ignored. */
+export const SERPAPI_RESULTS_WITH_ERROR = {
+  ...SERPAPI_OK,
+  error: 'Some notice that must be ignored.',
+};
