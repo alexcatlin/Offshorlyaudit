@@ -28,7 +28,7 @@ describe('reportEmail', () => {
     expect(e.subject).toBe('Your website audit for acme.example');
     expect(e.text).toContain("Here's the link to the website audit you asked for: https://audit.example/r/AAAAAAAAAAAAAAAAAAAAAA");
     expect(e.text).toContain('Website: acme.example, audited 20 November 2026');
-    expect(e.text).toContain('Buyer fit: 62/100 · Security: 70/100 · Website health: 80/100 · AI ideas: 3');
+    expect(e.text).toContain('Customer fit: 62/100 · Security: 70/100 · Website health: 80/100 · AI ideas: 3');
     expect(e.text).toContain('The link works until 20 December 2026. Anyone with it can view the report, so only forward it to people you trust.');
     expect(e.text).toContain("You're getting this one-off email because you asked for it on the Offshorly website audit. Questions? Just reply.");
     expect(e.text.trim().endsWith('Offshorly Ltd')).toBe(true);
@@ -47,6 +47,14 @@ describe('reportEmail', () => {
     expect(e.html).not.toMatch(/<img/i);
     expect(e.html).not.toMatch(/<script|pixel|utm_/i);
     expect(`${e.text}${e.html}`).not.toMatch(/book a|consultation|calendly/i);
+  });
+
+  it('adds one booking line only when a bookingUrl is passed (opted-in visitors)', () => {
+    const url = 'https://cal.com/offshorly/30min?utm_source=offshorly-audit&utm_medium=email&utm_content=report-email';
+    const e = buildReportEmail(input({ bookingUrl: url }));
+    expect(e.text).toContain(`Want to talk it through? Book a free 30-minute consultation: ${url}`);
+    expect(e.html).toContain('href="https://cal.com/offshorly/30min?utm_source=offshorly-audit&amp;utm_medium=email&amp;utm_content=report-email"');
+    expect(e.html).not.toMatch(/<img|<script|pixel/i);
   });
 
   it('contains no model prose: no opportunity titles, summaries or quotes', () => {
@@ -72,7 +80,7 @@ describe('reportEmail', () => {
   it('omits null scores and the ideas count when AI is unavailable', () => {
     const e = buildReportEmail(input({ buyerFit: null, health: null, ideas: null }));
     expect(e.text).toContain('Security: 70/100');
-    expect(e.text).not.toMatch(/Buyer fit:|Website health:|AI ideas:/);
+    expect(e.text).not.toMatch(/Customer fit:|Website health:|AI ideas:/);
     const none = buildReportEmail(input({ buyerFit: null, security: null, health: null, ideas: null }));
     expect(none.text).not.toContain('/100');
     expect(reportEmailFields({

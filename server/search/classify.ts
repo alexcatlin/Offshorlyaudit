@@ -6,13 +6,19 @@
 // otherwise null (no search). A wrong guess is caught later: validation drops all grounding when
 // the model's resolved industry differs.
 //
-// Linear: the text is normalised once to lowercase words separated by single spaces, then each
-// fixed phrase is counted with indexOf (no regex over page text).
+// Linear and bounded: every field is capped before use (see CLASSIFY_*_CHARS), the text is
+// normalised once to lowercase words separated by single spaces, then each fixed phrase is
+// counted with indexOf (no regex over page text). The cost is about phrases x capped input, so
+// a hostile multi-megabyte title cannot make it slow.
 import { INDUSTRIES, INDUSTRY_IDS } from '../../shared/industries.js';
 import type { IndustryId } from '../../shared/industries.js';
 import type { FetchedPage } from '../site/types.js';
 
 export const CLASSIFY_TEXT_CHARS = 3_000;
+/** Real titles and descriptions are far shorter; the rest of a huge one is not evidence. */
+export const CLASSIFY_TITLE_CHARS = 300;
+export const CLASSIFY_DESCRIPTION_CHARS = 600;
+export const CLASSIFY_MAX_INNER_PAGES = 10;
 export const CLASSIFY_MIN_HITS = 2;
 export const CLASSIFY_MIN_PHRASES = 2;
 
@@ -64,7 +70,12 @@ export interface IndustryMatch {
 export const industryMatches = (pages: readonly FetchedPage[]): Map<IndustryId, IndustryMatch> => {
   const [home, ...inner] = pages;
   const hay = words(
-    [home?.title ?? '', home?.description ?? '', (home?.text ?? '').slice(0, CLASSIFY_TEXT_CHARS), ...inner.map((p) => p.title)].join(' \n '),
+    [
+      (home?.title ?? '').slice(0, CLASSIFY_TITLE_CHARS),
+      (home?.description ?? '').slice(0, CLASSIFY_DESCRIPTION_CHARS),
+      (home?.text ?? '').slice(0, CLASSIFY_TEXT_CHARS),
+      ...inner.slice(0, CLASSIFY_MAX_INNER_PAGES).map((p) => p.title.slice(0, CLASSIFY_TITLE_CHARS)),
+    ].join(' \n '),
   );
   const out = new Map<IndustryId, IndustryMatch>();
   for (const [id, phrases] of PHRASES) {

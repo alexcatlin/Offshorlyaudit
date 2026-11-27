@@ -11,11 +11,13 @@
 // serializer rewrites it to :id) and these handlers log ids other than it only.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { bookingUrl } from '../../shared/services.js';
 import type { ShareCreated } from '../../shared/types.js';
 import type { DailyCounter, SlidingWindowLimiter } from '../http/limits.js';
 import { sendError } from '../http/security.js';
 import { EMAIL_INVALID_MESSAGE, EMAIL_MAX, emailKey, logHash, validEmail } from '../lead/email.js';
 import { buildReportEmail, reportEmailFields } from '../mail/reportEmail.js';
+import type { MetricsStore } from '../metrics/store.js';
 import type { Mailer } from '../mail/types.js';
 import type { AuditSession, SessionStore } from '../http/sessions.js';
 import { buildSnapshot, NotReadyError } from '../share/snapshot.js';
@@ -38,6 +40,8 @@ export interface ShareRouteDeps {
   publicOrigin: string | null;
   retentionDays: number;
   now: () => number;
+  /** Daily counters (spec 001): counts shared-report views. */
+  metrics?: MetricsStore;
   /** Test seam: the snapshot wait (15 s). */
   snapshotWaitMs?: number;
   /** Phase 4: present only when email is on (provider configured, https PUBLIC_ORIGIN). */
@@ -201,6 +205,8 @@ export const registerShareRoutes = (app: FastifyInstance, deps: ShareRouteDeps):
           url: created.url,
           expiresAt: created.expiresAt,
           footerLine: mail.footerLine,
+          // PECR: a booking offer only for a visitor who ticked "ideas and offers".
+          ...(session.marketingOptIn ? { bookingUrl: bookingUrl('report-email', 'email') } : {}),
         });
         const result = await mail.mailer.send({
           to: email,
@@ -242,6 +248,7 @@ export const registerShareRoutes = (app: FastifyInstance, deps: ShareRouteDeps):
     const id = req.params.shareId;
     const report = SHARE_ID_RE.test(id) ? await deps.store.get(id) : null;
     if (!report) return sendError(reply, 404, { code: 'not_found', error: 'This report link has expired or been deleted.' });
+    deps.metrics?.inc('shared_view');
     return reply.send(report);
   });
 

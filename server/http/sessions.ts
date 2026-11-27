@@ -28,10 +28,12 @@ export interface AuditSession {
   emailSent: boolean;
   /** Feedback lines written through this session (POST /api/feedback caps it). */
   feedbackWrites: number;
+  /** True once this session's report view was counted (spec 001: one view per report). */
+  viewCounted: boolean;
   createdAt: number;
 }
 
-export type NewSession = Omit<AuditSession, 'createdAt' | 'emailSent' | 'feedbackWrites' | 'shareId' | 'shareExpiresAt'>;
+export type NewSession = Omit<AuditSession, 'createdAt' | 'emailSent' | 'feedbackWrites' | 'viewCounted' | 'shareId' | 'shareExpiresAt'>;
 
 export interface SessionStore {
   /** Stores a new session and returns its token. */
@@ -47,7 +49,7 @@ export const createSessionStore = (opts: { ttlMs: number; max?: number; now?: Cl
   return {
     create(data) {
       const token = newSessionToken();
-      cache.set(token, { ...data, emailSent: false, feedbackWrites: 0, createdAt: now() });
+      cache.set(token, { ...data, emailSent: false, feedbackWrites: 0, viewCounted: false, createdAt: now() });
       return token;
     },
     get(token) {

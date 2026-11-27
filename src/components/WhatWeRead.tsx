@@ -1,4 +1,5 @@
 import { industryPhrase } from '../../shared/industries.js';
+import { CTA } from '../../shared/services.js';
 import type { AuditReport, Features } from '../../shared/types.js';
 import { COPY } from '../content/copy.js';
 import { Collapsible } from './Collapsible.js';
@@ -39,24 +40,43 @@ export const WhatWeRead = ({ report }: { report: AuditReport }) => {
 export type FooterFeatures = Pick<Features, 'share' | 'shareRetentionDays'> & Partial<Pick<Features, 'email'>>;
 
 /**
- * The privacy line: the saved-report wording when sharing is on, else "We don't save reports…".
- * The Resend sentence is added only when report email is on (which needs sharing).
+ * The folded "How we handle your data" list as [label, text] rows: saved reports (the sharing-on
+ * wording, else "We don't save reports…"), idea ratings, usage counts, the Resend row only when
+ * report email is on (which needs sharing), and the data sources when there are any.
  */
-export const privacyText = (features?: FooterFeatures | null): string => {
-  if (!features?.share) return COPY.footer.privacy;
-  const base = COPY.footer.privacyShare(features.shareRetentionDays);
-  return features.email ? `${base} ${COPY.footer.privacyEmail}` : base;
+export const footerItems = (features?: FooterFeatures | null, attributions: readonly string[] = []): [string, string][] => {
+  const F = COPY.footer;
+  return [
+    [F.savedLabel, features?.share ? F.savedOn(features.shareRetentionDays) : F.savedOff],
+    [F.ratingsLabel, F.ratings],
+    [F.countsLabel, F.counts],
+    ...(features?.share && features.email ? [[F.emailLabel, F.privacyEmail] as [string, string]] : []),
+    ...(attributions.length ? [[F.sourcesLabel, `${attributions.join('; ')}.`] as [string, string]] : []),
+  ];
 };
 
-/** Disclaimers, privacy line and data attributions at the foot of the report. */
-export const ReportFooter = ({ report, features }: { report: AuditReport; features?: FooterFeatures | null }) => (
+/**
+ * "About this report": three visible lines, then the rest in a native <details> that renders
+ * open in print (`open`), so a PDF keeps every statement.
+ */
+export const ReportFooter = ({ report, features, open = false }: { report: AuditReport; features?: FooterFeatures | null; open?: boolean }) => (
   <footer class="oa-report-foot">
+    <h3 class="oa-report-foot__heading">{COPY.footer.heading}</h3>
     <p>{COPY.footer.disclaimer}</p>
-    <p>{privacyText(features)}</p>
-    {report.attributions.length > 0 && (
-      <p>
-        {COPY.attributionsHeading}: {report.attributions.join('; ')}
-      </p>
-    )}
+    <p>{COPY.footer.ai}</p>
+    <p>
+      {COPY.footer.crm} <ExternalLink href={CTA.privacy.url}>{COPY.form.privacyLinkLabel}</ExternalLink>
+    </p>
+    <details class="oa-report-foot__more" open={open}>
+      <summary>{COPY.footer.more}</summary>
+      <dl class="oa-report-foot__list">
+        {footerItems(features, report.attributions).map(([label, text]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{text}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   </footer>
 );

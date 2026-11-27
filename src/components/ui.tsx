@@ -13,16 +13,19 @@ export const ExternalLink = ({
   children,
   class: cls,
   thirdParty,
+  onClick,
 }: {
   href: string;
   children: ComponentChildren;
   class?: string;
   thirdParty?: boolean;
+  /** Runs before the browser follows the link (it opens in a new tab, so the page stays). */
+  onClick?: () => void;
 }) => {
   const safe = safeHref(href);
   if (!safe) return <span class={cls}>{children}</span>;
   return (
-    <a class={cls} href={safe} target="_blank" rel={thirdParty ? THIRD_PARTY_REL : 'noopener'}>
+    <a class={cls} href={safe} target="_blank" rel={thirdParty ? THIRD_PARTY_REL : 'noopener'} onClick={onClick}>
       {children}
       <span class="oa-visually-hidden"> (opens in a new tab)</span>
     </a>

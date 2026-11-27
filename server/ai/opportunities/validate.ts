@@ -33,6 +33,7 @@ import type {
   IndustryExample,
 } from '../../../shared/types.js';
 import type { FetchedPage } from '../../site/types.js';
+import type { TechCategory } from '../../stack/signatures.js';
 import { verifyQuotes } from '../quotes.js';
 import {
   asArray,
@@ -69,6 +70,8 @@ export const SERVICE_FALLBACK: OpportunityServiceId = 'ai-development-services';
 /** Phase 5: industry examples kept, and result ids one item may cite. */
 export const MAX_INDUSTRY_EXAMPLES = 3;
 export const MAX_SOURCES_PER_ITEM = 2;
+/** Stack category (server/stack/signatures.ts) that is context only, never an idea's basis. */
+export const FORMS_CATEGORY: TechCategory = 'forms';
 
 // Re-exported for existing callers; the filters live in ../text.ts.
 export { disallowedFigures, FIGURE_PATTERN } from '../text.js';
@@ -164,8 +167,9 @@ const validateOne = (raw: Record<string, unknown>, sh: Shared): Classified => {
   // Site basis: verified quotes, detected tech, a real answer.
   const quotes: EvidenceQuote[] = verifyQuotes(raw.quotes, ctx.pages);
   const detected = new Map(ctx.stack.map((t) => [t.id, t]));
-  const techIds = [...new Set(asArray(raw.techIds).filter((t): t is string => typeof t === 'string'))].filter((id) =>
-    detected.has(id),
+  // A form builder (Contact Form 7 and the like) shows a form exists, not manual work: never a basis.
+  const techIds = [...new Set(asArray(raw.techIds).filter((t): t is string => typeof t === 'string'))].filter(
+    (id) => detected.has(id) && detected.get(id)?.category !== FORMS_CATEGORY,
   );
   const timeSink = (ctx.timeSink ?? '').trim();
   const tools = (ctx.tools ?? '').trim();

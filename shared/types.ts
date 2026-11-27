@@ -110,6 +110,19 @@ export interface Proof {
 
 export type TeamSize = '1-10' | '11-50' | '51-200' | '200+';
 
+/** "Where are you based?": a broad region, AI context only. Labels here so the prompt and CRM note can use them. */
+export const REGIONS = {
+  'uk-ireland': 'UK and Ireland',
+  europe: 'Europe',
+  'north-america': 'North America',
+  'latin-america': 'Latin America',
+  'middle-east-africa': 'Middle East and Africa',
+  'asia-pacific': 'Asia-Pacific',
+  'australia-nz': 'Australia and New Zealand',
+} as const;
+export type Region = keyof typeof REGIONS;
+export const isRegion = (v: unknown): v is Region => typeof v === 'string' && Object.hasOwn(REGIONS, v);
+
 /** The buyer the site is judged against (guide §4). */
 export interface Persona {
   /** e.g. "Founder" */
@@ -131,6 +144,8 @@ export interface AuditRequest {
   /** The BUYER the site is judged against. role/size/sector ≤200, trigger ≤300; blank fields → inferred. */
   persona?: Partial<Persona>;
   teamSize?: TeamSize;
+  /** Context only: never a basis, never a claim about local markets. */
+  region?: Region;
   /** ≤200 */
   timeSink?: string;
   /** ≤150: "Which tools does your team use day to day?" */
@@ -452,7 +467,7 @@ export interface AuditStartResponse extends AuditReport {
 }
 
 /** The visitor answers a saved or printed report shows (BasisItem reads them). Never lead fields. */
-export type ShareAnswers = Pick<AuditRequest, 'timeSink' | 'tools' | 'teamSize' | 'industry' | 'businessType'>;
+export type ShareAnswers = Pick<AuditRequest, 'timeSink' | 'tools' | 'teamSize' | 'region' | 'industry' | 'businessType'>;
 
 /** A saved snapshot, built server-side from the server's own AuditEntry. No email, no auditId. */
 export interface SharedReport {
@@ -488,6 +503,28 @@ export interface FeedbackBody {
   session: string;
   ideaIndex: number;
   vote: 'up' | 'down' | null;
+}
+
+/**
+ * POST /api/event (spec 001): visitor events counted as daily totals. Placements name the booking
+ * card or link: `ai` end of the AI tab, `ai-top` reserved (accepted, not emitted by any button yet), `pitch` AI tab with
+ * no ideas, `website` audit tab, `blocked` the "email already used" alert, `audit-link` the
+ * shared page's "Run a free audit of your own site".
+ */
+export const EVENT_NAMES = ['report_view', 'cta_click'] as const;
+export type EventName = (typeof EVENT_NAMES)[number];
+export const DIRECT_PLACEMENTS = ['ai', 'ai-top', 'pitch', 'website'] as const;
+export const SHARED_PLACEMENTS = ['ai', 'ai-top', 'pitch', 'website', 'audit-link'] as const;
+export const BLOCKED_PLACEMENT = 'blocked';
+export type Placement = (typeof DIRECT_PLACEMENTS)[number] | (typeof SHARED_PLACEMENTS)[number] | typeof BLOCKED_PLACEMENT;
+
+export interface EventBody {
+  event: EventName;
+  placement?: Placement;
+  /** Direct reports only. */
+  session?: string;
+  /** True only from the shared report page (no session there). */
+  shared?: true;
 }
 
 // ---------- Errors ----------

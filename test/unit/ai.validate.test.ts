@@ -125,6 +125,14 @@ describe('validateOpportunities', () => {
     expect(first(ok).basis).toEqual([{ kind: 'stack', techId: 'zendesk', name: 'Zendesk' }]);
   });
 
+  it('form-builder tech (category forms) is never a basis; real evidence tools are kept', () => {
+    const withCf7 = { ...ctx, stack: [...STACK, { id: 'cf7', name: 'Contact Form 7', category: 'forms' }] };
+    const only = validateOpportunities(raw([opp({ quotes: [], techIds: ['cf7'] })]), withCf7);
+    expect(only.status).toBe('insufficient');
+    const mixed = validateOpportunities(raw([opp({ quotes: [], techIds: ['cf7', 'zendesk'] })]), withCf7);
+    expect(first(mixed).basis).toEqual([{ kind: 'stack', techId: 'zendesk', name: 'Zendesk' }]);
+  });
+
   it('usesAnswer without an answer rejected', () => {
     const r = validateOpportunities(raw([opp({ quotes: [], usesAnswer: true })]), ctx);
     expect(r.status).toBe('insufficient');

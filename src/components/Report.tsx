@@ -60,9 +60,16 @@ const WebsitePanel = ({ report }: { report: AuditReport }) => {
         <FixFirst report={report} />
       </div>
       <Cta variant="website" />
-      <h3 class="oa-detail-heading">{COPY.detail.heading}</h3>
+      {showBuyerFitBlocks && (
+        <>
+          <h3 class="oa-detail-heading">{COPY.detail.messageHeading}</h3>
+          <div class="oa-details">
+            <BuyerFitDetail pending={bfPending} buyerFit={hasBuyerFit(report) ? report.buyerFit : undefined} />
+          </div>
+        </>
+      )}
+      <h3 class="oa-detail-heading">{COPY.detail.technicalHeading}</h3>
       <div class="oa-details">
-        <BuyerFitDetail pending={bfPending} buyerFit={hasBuyerFit(report) ? report.buyerFit : undefined} />
         <SecuritySection report={report} />
         <HealthSection report={report} />
         <WhatWeRead report={report} />
@@ -94,6 +101,10 @@ export const Report = ({ report, request, mode = 'live', onRestart, initialTab =
 
   const count = aiCount(report);
   const voteHandler = mode === 'live' ? onVote : undefined;
+  const hint = (t: Tab, selected: boolean): string => {
+    if (t === 'website') return selected ? COPY.report.tabWebsiteHint : COPY.report.tabWebsiteAction;
+    return !selected && count ? COPY.report.tabAiAction(count) : COPY.report.tabAiHint;
+  };
 
   // One tree for every mode: the header (and the actions in it) keeps its place when in-place
   // printing flips mode to 'print', so ReportActions keeps its state (e.g. a shown share link).
@@ -143,18 +154,30 @@ export const Report = ({ report, request, mode = 'live', onRestart, initialTab =
                     class={selected ? 'oa-tab is-selected' : 'oa-tab'}
                     aria-selected={selected}
                     aria-controls={`oa-panel-${t}`}
+                    aria-describedby={`oa-tab-${t}-hint`}
                     tabIndex={selected ? 0 : -1}
                     onClick={() => setTab(t)}
                   >
-                    {t === 'website' ? COPY.report.tabWebsite : COPY.report.tabAi}
-                    {t === 'ai' && report.aiStatus === 'pending' && (
-                      <span class="oa-tab__status">
-                        <Spinner small label={COPY.report.tabAiPending} />
-                      </span>
-                    )}
-                    {t === 'ai' && count !== null && count > 0 && (
-                      <span class="oa-tab__badge" aria-label={COPY.report.tabAiCount(count)}>
-                        {count}
+                    <span class="oa-tab__label">
+                      {t === 'website' ? COPY.report.tabWebsite : COPY.report.tabAi}
+                      {t === 'ai' && report.aiStatus === 'pending' && (
+                        <span class="oa-tab__status">
+                          <Spinner small label={COPY.report.tabAiPending} />
+                        </span>
+                      )}
+                      {t === 'ai' && count !== null && count > 0 && (
+                        <span class="oa-tab__badge" aria-label={COPY.report.tabAiCount(count)}>
+                          {count}
+                        </span>
+                      )}
+                    </span>
+                    {/* Read as the tab's description, not its name. */}
+                    <span class="oa-tab__hint" id={`oa-tab-${t}-hint`} aria-hidden="true">
+                      {hint(t, selected)}
+                    </span>
+                    {!selected && (
+                      <span class="oa-tab__arrow" aria-hidden="true">
+                        →
                       </span>
                     )}
                   </button>
@@ -179,7 +202,6 @@ export const Report = ({ report, request, mode = 'live', onRestart, initialTab =
           </>
         )}
 
-        <ReportFooter report={report} features={features} />
         {mode === 'live' && onRestart && (
           <p class="oa-restart">
             <button type="button" class="oa-button oa-button--outline" onClick={onRestart}>
@@ -187,6 +209,7 @@ export const Report = ({ report, request, mode = 'live', onRestart, initialTab =
             </button>
           </p>
         )}
+        <ReportFooter report={report} features={features} open={print} />
       </article>
     </ForceOpenContext.Provider>
   );

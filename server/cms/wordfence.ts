@@ -19,7 +19,7 @@
 import { compareVersions } from './version.js';
 
 export const WORDFENCE_FEED_URL = 'https://www.wordfence.com/api/intelligence/v3/vulnerabilities/scanner';
-export const WORDFENCE_ATTRIBUTION = 'Vulnerability data: Wordfence Intelligence (https://www.wordfence.com/threat-intel/)';
+export const WORDFENCE_ATTRIBUTION = 'Wordfence Intelligence (vulnerability data, https://www.wordfence.com/threat-intel/)';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 const SEVERITY_RANK: Record<Severity, number> = { low: 1, medium: 2, high: 3, critical: 4 };

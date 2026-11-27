@@ -1,6 +1,6 @@
 // Minimal input types for the AI layer. Deliberately not imported from server/cms or
 // server/stack: callers map their results onto these.
-import type { AiSection, CmsInfo, DetectedTech, IndustryChoice, IndustryId, TeamSize } from '../../shared/types.js';
+import type { AiSection, CmsInfo, DetectedTech, IndustryChoice, IndustryId, Region, TeamSize } from '../../shared/types.js';
 import type { FetchedPage } from '../site/types.js';
 
 /** Detected tech plus the signature's optional `signals` hint (e.g. "support triage"). */
@@ -13,6 +13,8 @@ export interface OpportunitiesInput {
   stack: readonly StackTechInput[];
   saasCount: number;
   teamSize?: TeamSize;
+  /** Visitor's region: prompt context only. */
+  region?: Region;
   timeSink?: string;
   /** Visitor's own words for their business (sanitised, emails redacted). */
   businessType?: string;

@@ -26,6 +26,8 @@ describe('validateAuditRequest', () => {
     expect(validateAuditRequest({ url: 5 }).ok).toBe(false);
     expect(validateAuditRequest({ url: `a.example/${'x'.repeat(500)}` }).ok).toBe(false);
     expect(validateAuditRequest({ url: 'a.example', teamSize: '7' }).ok).toBe(false);
+    expect(validateAuditRequest({ url: 'a.example', region: 'mars' }).ok).toBe(false);
+    expect(validateAuditRequest({ url: 'a.example', region: 42 }).ok).toBe(false);
     expect(validateAuditRequest({ url: 'a.example', timeSink: 'x'.repeat(201) }).ok).toBe(false);
     expect(validateAuditRequest({ url: 'a.example', persona: 'founder' }).ok).toBe(false);
     expect(validateAuditRequest({ url: 'a.example', persona: { trigger: 'x'.repeat(301) } }).ok).toBe(false);
@@ -329,5 +331,15 @@ describe('Amendment 4: cache key', async () => {
     expect(cacheKey({ url: 'x', tools: '' }, u)).toBe(base);
     const blank = validateAuditRequest({ url: 'x', industry: '', tools: '   ' });
     expect(blank.ok && cacheKey(blank.value, u)).toBe(base);
+  });
+
+  it('region: valid values kept, blank omitted, and it changes the key', () => {
+    const base = cacheKey({ url: 'x' }, u);
+    const r = validateAuditRequest({ url: 'x', region: 'europe' });
+    expect(r.ok && r.value.region).toBe('europe');
+    const none = validateAuditRequest({ url: 'x', region: '' });
+    expect(none.ok && 'region' in none.value).toBe(false);
+    expect(cacheKey({ url: 'x', region: 'europe' }, u)).not.toBe(base);
+    expect(cacheKey({ url: 'x', region: 'europe' }, u)).not.toBe(cacheKey({ url: 'x', region: 'asia-pacific' }, u));
   });
 });

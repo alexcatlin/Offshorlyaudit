@@ -10,7 +10,7 @@ import type { AuditReport, SharedReport } from '../../shared/types.js';
 import { FeedbackButtons, nextVote } from '../../src/components/FeedbackButtons.js';
 import { Report } from '../../src/components/Report.js';
 import { isReportSettled, ReportActions } from '../../src/components/ReportActions.js';
-import { privacyText, ReportFooter } from '../../src/components/WhatWeRead.js';
+import { footerItems, ReportFooter } from '../../src/components/WhatWeRead.js';
 import { COPY } from '../../src/content/copy.js';
 import { toAuditError } from '../../src/lib/errors.js';
 import { formatDate } from '../../src/lib/report.js';
@@ -181,7 +181,7 @@ describe('Report modes', () => {
     expect(html).not.toContain(COPY.footer.newAudit);
     expect(html).toContain(COPY.actions.pdf);
     expect(html).not.toContain(COPY.actions.copyLink);
-    expect(html).toContain(COPY.footer.privacyShare(30));
+    expect(html).toContain(COPY.footer.savedOn(30));
     const printed = renderToString(h(SharedView, { shared, printing: true, onPdf: () => undefined }));
     expect(printed).not.toContain('role="tablist"');
     // Kept mounted for in-place printing; print CSS hides .oa-actions.
@@ -233,7 +233,9 @@ describe('ReportActions', () => {
     const on = renderToString(h(ReportActions, { report: report(), mode: 'live', onPdf: () => undefined, features, session: 'S'.repeat(22) }));
     expect(on).toContain(COPY.actions.pdf);
     expect(on).toContain(COPY.actions.copyLink);
-    expect(on).toContain(COPY.actions.pdfHint);
+    // Idle: nothing beside the buttons; the PDF hint only appears in the status line after a click.
+    expect(on).not.toContain(COPY.actions.pdfHint);
+    expect(on).not.toContain('oa-actions__hint');
     expect(on).not.toContain('disabled');
     expect(on.match(/oa-actions__row/g)).toHaveLength(1);
     expect(on).not.toContain(COPY.actions.email); // Phase 4 not built
@@ -246,10 +248,12 @@ describe('ReportActions', () => {
 
 describe('footer privacy copy', () => {
   it('switches on features.share', () => {
-    expect(privacyText({ share: true, shareRetentionDays: 30 })).toContain('deleted after 30 days');
-    expect(privacyText({ share: false, shareRetentionDays: 30 })).toBe(COPY.footer.privacy);
-    expect(privacyText(null)).toBe(COPY.footer.privacy);
-    expect(COPY.footer.privacy).toContain("We don't save reports or create share links.");
+    const saved = (f: Parameters<typeof footerItems>[0]) => footerItems(f)[0];
+    expect(saved({ share: true, shareRetentionDays: 30 })).toEqual([COPY.footer.savedLabel, COPY.footer.savedOn(30)]);
+    expect(COPY.footer.savedOn(30)).toContain('deleted after 30 days');
+    expect(saved({ share: false, shareRetentionDays: 30 })).toEqual([COPY.footer.savedLabel, COPY.footer.savedOff]);
+    expect(saved(null)).toEqual([COPY.footer.savedLabel, COPY.footer.savedOff]);
+    expect(COPY.footer.savedOff).toContain("We don't save reports or create share links.");
     const on = renderToString(h(ReportFooter, { report: report(), features: { share: true, shareRetentionDays: 7 } }));
     expect(on).toContain('We only save a report if you share or email it.');
     expect(on).toContain('deleted after 7 days');
@@ -268,15 +272,19 @@ describe('new error codes', () => {
 
   it('exact copy strings', () => {
     expect(COPY.actions.linkCopied('20 December 2026')).toBe('Link copied. Anyone with it can view this report, including your answers, until 20 December 2026.');
-    expect(COPY.actions.pdfHint).toBe("Choose 'Save as PDF' as the printer.");
+    expect(COPY.actions.pdfHint).toBe("In the print window, choose 'Save as PDF' as the destination.");
+    expect(COPY.actions.waiting).toBe('Available when the report has finished loading.');
     expect(COPY.shared.expired).toBe('This report link has expired or been deleted.');
     expect(COPY.feedback).toMatchObject({ question: 'Was this idea useful?', up: 'Useful', down: 'Not useful', thanks: 'Thanks for telling us.' });
-    const rated = "If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached.";
-    expect(COPY.footer.privacy).toBe(
-      `We don't save reports or create share links. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Results are otherwise held briefly in memory. ${rated} The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.`,
+    // The folded footer keeps every earlier privacy sentence unchanged (fable review §6).
+    expect(COPY.footer.ratings).toBe("If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached.");
+    expect(COPY.footer.counts).toBe('We also count audits, report views and booking-button clicks as daily totals, with nothing that identifies you.');
+    expect(COPY.footer.savedOff).toBe("We don't save reports or create share links. Results are otherwise held briefly in memory.");
+    expect(COPY.footer.savedOn(30)).toBe(
+      'We only save a report if you share or email it. A saved report has no email address attached, can be seen by anyone with its link, is hidden from search engines, and is deleted after 30 days or as soon as you delete the link. Otherwise results are held briefly in memory.',
     );
-    expect(COPY.footer.privacyShare(30)).toBe(
-      `We only save a report if you share or email it. A saved report has no email address attached, can be seen by anyone with its link, is hidden from search engines, and is deleted after 30 days or as soon as you delete the link. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Otherwise results are held briefly in memory. ${rated} The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.`,
-    );
+    expect(COPY.footer.disclaimer).toBe('We only look at what your site shows any visitor. This is not a penetration test.');
+    expect(COPY.footer.ai).toBe("Your pages and answers are analysed by Anthropic's Claude. Your email is never sent to Anthropic.");
+    expect(COPY.footer.crm).toBe('We keep your email, your site, your answers and a summary of the results in our CRM so we can follow up.');
   });
 });

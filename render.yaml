@@ -67,7 +67,10 @@ services:
         value: /var/data/idea-feedback.jsonl
       - key: FEEDBACK_RETENTION_DAYS
         value: "365"
-      # Bearer token for /api/admin/feedback.csv and share deletion; copy it from the Environment page.
+      # Daily counters (clicks, audits, AI results, cost): totals only, no personal data (spec 001).
+      - key: METRICS_PATH
+        value: /var/data/metrics.json
+      # Bearer token for /api/admin/feedback.csv, /api/admin/measures.csv and share deletion; copy it from the Environment page.
       - key: ADMIN_TOKEN
         generateValue: true
       # --- Share links (Amendment 5) ---

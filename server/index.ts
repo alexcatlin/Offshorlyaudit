@@ -10,6 +10,7 @@ import { createCrmSync } from './crm/sync.js';
 import type { CrmLog } from './crm/sync.js';
 import { createTwentyClient } from './crm/twenty.js';
 import { createFeedbackStore } from './feedback/store.js';
+import { createMetricsStore } from './metrics/store.js';
 import { createLedger } from './lead/ledger.js';
 import type { LedgerLog } from './lead/ledger.js';
 import { createResendMailer } from './mail/resend.js';
@@ -61,6 +62,7 @@ const ledger = await createLedger(config, ledgerLog);
 // Amendment 5: idea feedback (JSONL) and shared reports (one file each), both on the disk.
 const feedback = await createFeedbackStore(config, (level, msg, extra) => log(level, msg, extra));
 const reports = await createReportStore(config, (level, msg, extra) => log(level, msg, extra));
+const metrics = await createMetricsStore(config, (level, msg, extra) => log(level, msg, extra));
 
 // Non-fatal configuration problems (wording only, never values).
 for (const w of config.warnings) log('warn', w);
@@ -117,6 +119,7 @@ const app = await buildApp({
   mailer,
   crm,
   feedback,
+  metrics,
   reports,
   clientDir: resolve(process.cwd(), 'dist/client'),
   logger,
@@ -148,7 +151,7 @@ const shutdown = (signal: string) => {
         })
       : null,
   ])
-    .then(() => Promise.all([ledger.close(), feedback.close(), research?.close()]))
+    .then(() => Promise.all([ledger.close(), feedback.close(), metrics.close(), research?.close()]))
     .then(
       () => process.exit(0),
       () => process.exit(1),
@@ -169,6 +172,7 @@ app.log.info(
     ledger: ledger.kind,
     crm: crm ? 'on' : 'off',
     feedback: feedback.kind,
+    metrics: metrics.kind,
     shares: reports ? reports.kind : 'off',
     admin: !!config.adminToken,
     mail: !!(mailer && reports),

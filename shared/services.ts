@@ -151,13 +151,18 @@ export const serviceUrl = (id: ServiceId): string => offshorlyUrl(SERVICES[id].p
 export const proofUrl = (id: ProofId): string => offshorlyUrl(PROOFS[id].path);
 
 export const CTA = {
+  /** The only place the booking page is named: bookingUrl, the CRM note and tests all read it. */
   consultation: {
     label: 'Book a free 30-minute consultation',
-    url: 'https://cal.com/offshorly/30min',
+    url: 'https://tidycal.com/offshorly/30-minute-meeting-1k2qnz9-m7jl6xl',
   },
+  /**
+   * Tagged for analytics only. The contact form's "Where did you hear about us?" select (name
+   * `source`) does not read the query string yet, so nothing is pre-selected.
+   */
   contact: {
     label: "Tell us what you're building",
-    url: 'https://offshorly.com/contact/',
+    url: 'https://offshorly.com/contact/?utm_source=offshorly-audit&utm_medium=report',
   },
   privacy: {
     label: 'Privacy policy',
@@ -169,3 +174,11 @@ export const CTA = {
     url: '/',
   },
 } as const;
+
+/**
+ * The consultation link with standard UTM tags. TidyCal documents no UTM handling on booking
+ * links (only on its after-booking redirect), so whether the tags reach the booking is untested.
+ * `placement` names the button. No personal data.
+ */
+export const bookingUrl = (placement: string, medium: 'report' | 'email' = 'report'): string =>
+  `${CTA.consultation.url}?utm_source=offshorly-audit&utm_medium=${medium}&utm_content=${encodeURIComponent(placement)}`;

@@ -400,7 +400,7 @@ describe('health, static files and headers', () => {
   it('GET /healthz', async () => {
     app = await buildApp(appDeps());
     const res = await app.inject({ method: 'GET', url: '/healthz' });
-    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test', ledger: 'memory', crm: false, feedback: 'memory', shares: 'memory', mail: false, search: false });
+    expect(res.json()).toEqual({ ok: true, aiMode: 'fixture', version: '0.0.0-test', ledger: 'memory', crm: false, feedback: 'memory', metrics: 'memory', shares: 'memory', mail: false, search: false });
   });
 
   it('serves index.html with CSP frame-ancestors, no X-Frame-Options, and security headers', async () => {

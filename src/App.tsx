@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { AuditReport, AuditRequest, ErrorCode, Features } from '../shared/types.js';
-import { AuditError, fetchAi, fetchBuyerFit, sendFeedback, startAudit } from './api.js';
+import { AuditError, fetchAi, fetchBuyerFit, sendFeedback, setTrackContext, startAudit, track } from './api.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { Form } from './components/Form.js';
 import { Loading } from './components/Loading.js';
@@ -115,6 +115,14 @@ export const App = ({ embedded, devAutorun }: { embedded: boolean; devAutorun?: 
     const check = normaliseUrlInput(devAutorun.url);
     if (check.ok) void submit({ ...EMPTY_FORM, url: devAutorun.url, email: 'dev@example.com' }, check.url);
   }, []);
+
+  // Spec 001: this page's report session lets the booking cards count direct clicks, and the
+  // report counts as viewed once per session (the server dedupes too).
+  const reportSession = state.phase === 'report' ? state.session : null;
+  useEffect(() => {
+    setTrackContext(reportSession ? { session: reportSession } : null);
+    if (reportSession) track('report_view');
+  }, [reportSession]);
 
   const onVote: VoteHandler = async (ideaIndex, vote) => {
     const session = sessionRef.current;

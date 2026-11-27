@@ -1,26 +1,40 @@
 import { gaugeColour } from '../../shared/reportLogic.js';
 import type { ActionItem, BuyerFit, EvidenceQuote, ScoredCriterion } from '../../shared/types.js';
-import { COPY } from '../content/copy.js';
+import { COPY, EFFORT_LABELS, IMPACT_LABELS, OWNER_LABELS } from '../content/copy.js';
 import { sortCriteria, weakestCriterion } from '../lib/report.js';
 import { Collapsible } from './Collapsible.js';
-import { ActionTags, ExternalLink } from './ui.js';
+import { ExternalLink } from './ui.js';
 
 const B = COPY.buyerFit;
 
+/** Quote card: "✓ Working for you" / "✕ Working against you" and "See it on" in one row, the quote, then "Why:". */
 export const Quote = ({ q }: { q: EvidenceQuote }) => (
   <figure class={`oa-quote oa-quote--${q.effect ?? 'neutral'}`}>
-    {q.effect && (
-      <figcaption class="oa-quote__label">
-        {q.effect === 'for' ? COPY.firstImpression.workingFor : COPY.firstImpression.workingAgainst}
-      </figcaption>
-    )}
+    <figcaption class="oa-quote__head">
+      {q.effect && (
+        <span class="oa-quote__label">
+          <span class="oa-quote__mark" aria-hidden="true">
+            {q.effect === 'for' ? '✓' : '✕'}{' '}
+          </span>
+          {q.effect === 'for' ? COPY.firstImpression.workingFor : COPY.firstImpression.workingAgainst}
+        </span>
+      )}
+      <ExternalLink class="oa-quote__link" href={q.pageUrl}>
+        {B.viewPage(q.pageLabel)}
+      </ExternalLink>
+    </figcaption>
     <blockquote class="oa-quote__text">“{q.quote}”</blockquote>
-    {q.note && <p class="oa-quote__note">{q.note}</p>}
-    <p class="oa-quote__source">
-      <ExternalLink href={q.pageUrl}>{B.viewPage(q.pageLabel)}</ExternalLink>
-    </p>
+    {q.note && (
+      <p class="oa-quote__note">
+        {COPY.firstImpression.why} {q.note}
+      </p>
+    )}
   </figure>
 );
+
+/** "Puts customers off" first, then the rest in their order. */
+const againstFirst = (quotes: readonly EvidenceQuote[]): EvidenceQuote[] =>
+  [...quotes].sort((a, b) => Number(b.effect === 'against') - Number(a.effect === 'against'));
 
 const Gauge = ({ score }: { score: number }) => (
   <span class={`oa-gauge oa-gauge--${gaugeColour(score)}`} role="img" aria-label={B.outOfTen(score)}>
@@ -44,7 +58,7 @@ const Criterion = ({ c }: { c: ScoredCriterion }) => (
     <p class="oa-criterion__reasoning">{c.reasoning}</p>
     {c.evidence && c.evidence.length > 0 && (
       <div class="oa-criterion__quotes">
-        {c.evidence.map((q, i) => (
+        {againstFirst(c.evidence).map((q, i) => (
           <Quote key={i} q={q} />
         ))}
       </div>
@@ -52,15 +66,25 @@ const Criterion = ({ c }: { c: ScoredCriterion }) => (
   </li>
 );
 
-const ActionList = ({ items }: { items: ActionItem[] }) => (
-  <ul class="oa-actions">
+/** "High impact · Some work · For marketing". */
+export const actionMeta = (a: Pick<ActionItem, 'impact' | 'effort' | 'owner'>): string =>
+  [IMPACT_LABELS[a.impact], EFFORT_LABELS[a.effort], OWNER_LABELS[a.owner]].join(' · ');
+
+/** Numbered rows in the "Fix these first" style; `start` continues the numbering across groups. */
+const ActionList = ({ items, start }: { items: ActionItem[]; start: number }) => (
+  <ol class="oa-fixfirst__list oa-plan" start={start}>
     {items.map((a, i) => (
-      <li key={i} class="oa-action">
-        <p class="oa-action__text">{a.text}</p>
-        <ActionTags impact={a.impact} effort={a.effort} owner={a.owner} />
+      <li key={i} class="oa-fixfirst__item">
+        <span class="oa-fixfirst__num" aria-hidden="true">
+          {start + i}
+        </span>
+        <div class="oa-fixfirst__body">
+          <p class="oa-fixfirst__title">{a.text}</p>
+          <p class="oa-plan__meta">{actionMeta(a)}</p>
+        </div>
       </li>
     ))}
-  </ul>
+  </ol>
 );
 
 /** The three buyer-fit detail sections. Pending → placeholder headers; unavailable → nothing. */
@@ -110,14 +134,14 @@ export const BuyerFitDetail = ({ buyerFit, pending }: { buyerFit?: BuyerFit; pen
         <Collapsible title={B.actionsHeading} summary={B.actionsSummary(now.length, later.length)}>
           {now.length > 0 && (
             <>
-              <h4 class="oa-subheading">{B.doNow}</h4>
-              <ActionList items={now} />
+              <h4 class="oa-eyebrow oa-plan__group">{B.doNow(now.length)}</h4>
+              <ActionList items={now} start={1} />
             </>
           )}
           {later.length > 0 && (
             <>
-              <h4 class="oa-subheading">{B.longerTerm}</h4>
-              <ActionList items={later} />
+              <h4 class="oa-eyebrow oa-plan__group">{B.longerTerm(later.length)}</h4>
+              <ActionList items={later} start={now.length + 1} />
             </>
           )}
         </Collapsible>

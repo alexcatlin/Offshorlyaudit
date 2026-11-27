@@ -49,7 +49,7 @@ export const fixtureBuyerFit = (input: FixtureBuyerFitInput): { buyerFit: BuyerF
     criteria: [
       { name: 'Clarity of Offer', description: 'States plainly what is offered and to whom.', redFlags: ['Vague service list', 'Jargon'], weight: 'high' },
       { name: 'Proof of Results', description: 'Shows named clients, case studies or outcomes.', redFlags: ['No case studies', 'Anonymous testimonials'], weight: 'high' },
-      { name: 'Relevance to Buyer', description: 'Speaks to this buyer’s situation and trigger.', redFlags: ['Generic copy'], weight: 'medium' },
+      { name: 'Relevance to Customer', description: 'Speaks to this customer’s situation and trigger.', redFlags: ['Generic copy'], weight: 'medium' },
       { name: 'Ease of Next Step', description: 'Makes it simple to get in touch or book.', redFlags: ['Hidden contact details'], weight: 'low' },
     ],
   };
@@ -58,22 +58,22 @@ export const fixtureBuyerFit = (input: FixtureBuyerFitInput): { buyerFit: BuyerF
   const step2Raw = {
     verdict: {
       summary: '[Sample] A credible first impression with room to sharpen the offer.',
-      brutalTruth: '[Sample] Proof is thin for a buyer who wants evidence before calling.',
+      brutalTruth: '[Sample] Proof is thin for a customer who wants evidence before calling.',
     },
     strengths: ['[Sample] The homepage says what the business does early on.', '[Sample] Contact routes are easy to find.'],
     criteria: [
       { name: 'x', score: 6, reasoning: '[Sample] The offer is stated but could be more specific.', weight: 'high', evidence: quote(0, 'for', '[Sample] States the offer') },
       { name: 'x', score: 4, reasoning: '[Sample] Little specific proof is visible on these pages.', weight: 'high', evidence: quote(1, 'against', '[Sample] Claim without proof') },
-      { name: 'x', score: 6, reasoning: '[Sample] Some copy speaks to this buyer, much is generic.', weight: 'medium', evidence: [] },
+      { name: 'x', score: 6, reasoning: '[Sample] Some copy speaks to this customer, much is generic.', weight: 'medium', evidence: [] },
       { name: 'x', score: 7, reasoning: '[Sample] The next step is clear.', weight: 'low', evidence: [] },
     ],
     mismatchIndex: [
       { point: '[Sample] Claims versus proof', explanation: '[Sample] Strong claims are not backed by named examples.' },
-      { point: '[Sample] Audience focus', explanation: '[Sample] The copy addresses everyone rather than this buyer.' },
+      { point: '[Sample] Audience focus', explanation: '[Sample] The copy addresses everyone rather than this customer.' },
     ],
     actions: [
       { text: '[Sample] Add one named case study to the homepage.', horizon: 'now', impact: 'high', effort: 'low', owner: 'marketing' },
-      { text: '[Sample] Rewrite the opening line for this buyer.', horizon: 'now', impact: 'medium', effort: 'low', owner: 'marketing' },
+      { text: '[Sample] Rewrite the opening line for this customer.', horizon: 'now', impact: 'medium', effort: 'low', owner: 'marketing' },
       { text: '[Sample] Agree the single audience to lead with.', horizon: 'later', impact: 'high', effort: 'medium', owner: 'leadership' },
       { text: '[Sample] Add structured data for services.', horizon: 'later', impact: 'low', effort: 'medium', owner: 'developer' },
     ],
@@ -122,7 +122,7 @@ export const fixtureOpportunities = (input: OpportunitiesInput): OpportunitiesRe
       quotes: sentences.slice(1),
       techIds,
       usesAnswer: answered,
-      aiApproach: '[Sample] Pull the data automatically and have AI draft the summary for review.',
+      aiApproach: '[Sample] An assistant pulls the figures together and drafts the summary for a person to review.',
       industryContext: '',
       efficiency: 'time-per-task',
       measureFirst: '[Sample] Note who builds the report and how long it takes.',
@@ -141,7 +141,7 @@ export const fixtureOpportunities = (input: OpportunitiesInput): OpportunitiesRe
             quotes: [],
             techIds: [],
             usesAnswer: false,
-            aiApproach: '[Sample] start with one narrow step of this work, automate it, and measure before going further.',
+            aiApproach: '[Sample] an assistant handles one narrow, repetitive step of this work and hands the rest to a person.',
             industryContext: '[Sample] businesses of this type often start with the simplest repetitive step.',
             efficiency: 'capacity',
             measureFirst: '[Sample] how often this work happens and who does it.',

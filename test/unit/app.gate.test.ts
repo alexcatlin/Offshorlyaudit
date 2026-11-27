@@ -283,6 +283,6 @@ describe('/healthz', () => {
   it('reports ledger kind and CRM state', async () => {
     app = await build({ crm: fakeCrm().crm, ledger: new MemoryLedger(), aiConfigError: true, config: appConfig({ aiMode: 'off' }) });
     const res = await app.inject({ method: 'GET', url: '/healthz' });
-    expect(res.json()).toEqual({ ok: true, aiMode: 'off', aiConfigError: true, version: '0.0.0-test', ledger: 'memory', crm: true, feedback: 'memory', shares: 'memory', mail: false, search: false });
+    expect(res.json()).toEqual({ ok: true, aiMode: 'off', aiConfigError: true, version: '0.0.0-test', ledger: 'memory', crm: true, feedback: 'memory', metrics: 'memory', shares: 'memory', mail: false, search: false });
   });
 });

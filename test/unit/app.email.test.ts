@@ -5,6 +5,7 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AuditStartResponse } from '../../shared/types.js';
+import { CTA } from '../../shared/services.js';
 import { buildApp } from '../../server/app.js';
 import type { AppDeps } from '../../server/app.js';
 import { emailKey, logHash } from '../../server/lead/email.js';
@@ -52,8 +53,8 @@ const build = (over: Partial<AppDeps> = {}, cfg: Parameters<typeof appConfig>[0]
     config: appConfig({ rateLimitHourly: 100, rateLimitDaily: 1000, ...cfg }),
   });
 
-const start = async (a: FastifyInstance, email: string, url = 'acme.example') => {
-  const res = await a.inject({ method: 'POST', url: '/api/audit', headers: ORIGIN, payload: { url, email } });
+const start = async (a: FastifyInstance, email: string, url = 'acme.example', marketingOptIn?: boolean) => {
+  const res = await a.inject({ method: 'POST', url: '/api/audit', headers: ORIGIN, payload: { url, email, ...(marketingOptIn ? { marketingOptIn } : {}) } });
   expect(res.statusCode).toBe(200);
   const body = res.json<AuditStartResponse>();
   await a.inject({ method: 'GET', url: `/api/audit/${body.auditId}/ai`, headers: ORIGIN });
@@ -89,6 +90,18 @@ describe('Phase 4: POST /api/share/email', () => {
     // A later Copy link reuses the same share.
     const share = await app.inject({ method: 'POST', url: '/api/share', headers: ORIGIN, payload: { session: r.session } });
     expect(msg.text).toContain(share.json<{ url: string }>().url);
+  });
+
+  it('booking line (tagged link) only for a visitor who ticked offers; none otherwise (PECR)', async () => {
+    const m = fakeMailer();
+    app = await build({ mailer: m.mailer });
+    const plain = nextEmail();
+    await sendEmail(app, (await start(app, plain)).session, plain);
+    const optedIn = nextEmail();
+    await sendEmail(app, (await start(app, optedIn, 'other.example', true)).session, optedIn);
+    expect(m.sent[0]!.text).not.toMatch(/consultation/i);
+    expect(m.sent[0]!.text).not.toContain(CTA.consultation.url);
+    expect(m.sent[1]!.text).toContain(`${CTA.consultation.url}?utm_source=offshorly-audit&utm_medium=email&utm_content=report-email`);
   });
 
   it('uses MAIL_FOOTER_LINE when set', async () => {

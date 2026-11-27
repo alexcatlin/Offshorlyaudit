@@ -54,6 +54,7 @@ export const pickAnswers = (req: AuditEntry['request']): ShareAnswers => {
   if (req.timeSink) a.timeSink = req.timeSink;
   if (req.tools) a.tools = req.tools;
   if (req.teamSize) a.teamSize = req.teamSize;
+  if (req.region) a.region = req.region;
   if (req.industry) a.industry = req.industry;
   if (req.businessType) a.businessType = req.businessType;
   return a;

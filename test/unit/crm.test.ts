@@ -1,6 +1,7 @@
 // CRM sync tests. Twenty is a fake fetch: no network, no credentials.
 import { describe, expect, it } from 'vitest';
 import type { AiResult, AuditReport, BuyerFitResult } from '../../shared/types.js';
+import { CTA } from '../../shared/services.js';
 import { buildNote } from '../../server/crm/summary.js';
 import type { CrmLead } from '../../server/crm/summary.js';
 import { companyDomainFor, createCrmSync, splitName } from '../../server/crm/sync.js';
@@ -431,7 +432,7 @@ describe('Note summary', () => {
     expect(markdown).toContain('Email not verified');
     expect(markdown).toContain('Marketing opt-in: yes (notice v1, 2026-11-20T10:00:00.000Z)');
     expect(markdown).toContain('Source: audit widget');
-    expect(markdown).toContain('Booking link shown: https://cal.com/offshorly/30min');
+    expect(markdown).toContain(`Booking link shown: ${CTA.consultation.url}`);
     expect(markdown).not.toContain(EMAIL);
   });
 
@@ -543,12 +544,13 @@ describe('Note summary (Amendment 4)', () => {
       report: report(),
       buyerFit: null,
       ai: aiWithIndustry(),
-      request: { url: 'acme.example', businessType: 'Bookkeeping firm', teamSize: '11-50', tools: 'Xero, spreadsheets', timeSink: 'Receipts' },
+      request: { url: 'acme.example', businessType: 'Bookkeeping firm', teamSize: '11-50', region: 'uk-ireland', tools: 'Xero, spreadsheets', timeSink: 'Receipts' },
       costUsd: 0.0421,
     });
     expect(markdown).toContain('**Industry:** Accounting (inferred)');
     expect(markdown).toContain('**Business type:** Bookkeeping firm');
     expect(markdown).toContain('**Team size:** 11-50');
+    expect(markdown).toContain('**Based in:** UK and Ireland');
     expect(markdown).toContain('**Tools:** Xero, spreadsheets');
     expect(markdown).toContain('**What eats the week:** Receipts');
     expect(markdown).toContain('- Faster invoice processing (AI Automation) \\[site\\]');
@@ -561,6 +563,7 @@ describe('Note summary (Amendment 4)', () => {
     expect(markdown).toContain('**Industry:** Legal (given)');
     expect(markdown).not.toContain('AI cost');
     expect(markdown).not.toContain('**Tools:**');
+    expect(markdown).not.toContain('**Based in:**');
   });
 
   it('visitor answers are markdown-escaped and capped', () => {

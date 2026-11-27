@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { CTA, OFFSHORLY_ORIGIN } from '../../shared/services.js';
 import type { AuditReport, AuditRequest, SharedReport } from '../../shared/types.js';
-import { AuditError, fetchShared } from '../api.js';
+import { AuditError, fetchShared, setTrackContext, track } from '../api.js';
 import { Report } from '../components/Report.js';
 import { ReportActions } from '../components/ReportActions.js';
 import { COPY } from '../content/copy.js';
@@ -24,7 +24,7 @@ export const SharedBanner = ({ shared }: { shared: SharedReport }) => {
     <div class="oa-shared-banner" role="note">
       <p class="oa-shared-banner__line">{COPY.shared.banner(shared.report.domain, created, formatDate(shared.expiresAt))}</p>
       <p class="oa-shared-banner__disclaimer">{COPY.shared.disclaimer(shared.report.domain, formatDate(shared.report.auditedAt))}</p>
-      <a class="oa-button oa-button--primary oa-button--small" href={CTA.auditPage.url}>
+      <a class="oa-button oa-button--primary oa-button--small" href={CTA.auditPage.url} onClick={() => track('cta_click', 'audit-link')}>
         {COPY.shared.cta}
       </a>
     </div>
@@ -51,6 +51,12 @@ export const SharedView = ({ shared, printing = false, onPdf }: { shared: Shared
 export const SharedApp = ({ shareId }: { shareId: string }) => {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [printing, startPrint] = usePrintInPlace();
+
+  // The booking cards inside the report count as shared-page clicks.
+  useEffect(() => {
+    setTrackContext({ shared: true });
+    return () => setTrackContext(null);
+  }, []);
 
   useEffect(() => {
     fetchShared(shareId).then(
@@ -80,7 +86,7 @@ export const SharedApp = ({ shareId }: { shareId: string }) => {
         {(state.kind === 'expired' || state.kind === 'error') && (
           <section class="oa-card oa-shared-expired">
             <p>{state.kind === 'expired' ? COPY.shared.expired : state.message}</p>
-            <a class="oa-button oa-button--primary" href={CTA.auditPage.url}>
+            <a class="oa-button oa-button--primary" href={CTA.auditPage.url} onClick={() => track('cta_click', 'audit-link')}>
               {COPY.shared.cta}
             </a>
           </section>

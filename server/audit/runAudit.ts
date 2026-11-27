@@ -23,6 +23,7 @@ import type {
   Persona,
   TeamSize,
 } from '../../shared/types.js';
+import { isRegion } from '../../shared/types.js';
 import { emailChecks } from '../checks/dns.js';
 import type { ResolveTxt } from '../checks/dns.js';
 import { fetchCheckInputs } from '../checks/extras.js';
@@ -172,6 +173,10 @@ export const validateAuditRequest = (body: unknown): Validated => {
     if (!TEAM_SIZES.includes(b.teamSize as TeamSize)) return { ok: false, error: 'teamSize is not a valid option.' };
     out.teamSize = b.teamSize as TeamSize;
   }
+  if (b.region !== undefined && b.region !== null && b.region !== '') {
+    if (!isRegion(b.region)) return { ok: false, error: 'region is not a valid option.' };
+    out.region = b.region;
+  }
   const ts = optFreeText(b.timeSink, LIMITS.timeSink, 'timeSink');
   if (!ts.ok) return ts;
   if (ts.value) out.timeSink = ts.value;
@@ -319,6 +324,7 @@ export const runAudit = async (request: AuditRequest, deps: AuditDeps): Promise<
         stack: stack.tech,
         saasCount: stack.saasCount,
         ...(request.teamSize ? { teamSize: request.teamSize } : {}),
+        ...(request.region ? { region: request.region } : {}),
         ...(request.timeSink ? { timeSink: request.timeSink } : {}),
         ...(request.businessType ? { businessType: request.businessType } : {}),
         ...(request.industry ? { industry: request.industry } : {}),

@@ -73,9 +73,13 @@ export const OPPORTUNITIES_SCHEMA: JsonSchema = {
             items: { type: 'string' },
             description: '0-2 quotes, each 25 words or fewer, copied exactly from the page text. Empty for industry ideas.',
           },
-          techIds: { type: 'array', items: { type: 'string' }, description: 'Ids from DETECTED only.' },
+          techIds: { type: 'array', items: { type: 'string' }, description: 'Ids from DETECTED only; never form builders (category forms).' },
           usesAnswer: { type: 'boolean', description: 'True only if this idea relies on the visitor answers.' },
-          aiApproach: { type: 'string', description: '40 words or fewer: how AI could help, as a hypothesis to test.' },
+          aiApproach: {
+            type: 'string',
+            description:
+              '40 words or fewer: what the AI would do in this work, e.g. "An assistant reads each form submission, tags it and drafts a reply for a person to approve". Never an instruction to test or try; testing goes in measureFirst.',
+          },
           industryContext: {
             type: 'string',
             description:

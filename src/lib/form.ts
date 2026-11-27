@@ -1,6 +1,6 @@
 // Form helpers: URL normalisation and request building. Pure.
 import { isIndustryId } from '../../shared/industries.js';
-import type { AuditStartBody, IndustryId, Persona, TeamSize } from '../../shared/types.js';
+import { isRegion, type AuditStartBody, type IndustryId, type Persona, type Region, type TeamSize } from '../../shared/types.js';
 
 export interface FormValues {
   url: string;
@@ -12,6 +12,8 @@ export interface FormValues {
   sector: string;
   trigger: string;
   teamSize: TeamSize | '';
+  /** '' = "Not sure / prefer not to say". */
+  region: Region | '';
   timeSink: string;
   tools: string;
   email: string;
@@ -28,6 +30,7 @@ export const EMPTY_FORM: FormValues = {
   sector: '',
   trigger: '',
   teamSize: '',
+  region: '',
   timeSink: '',
   tools: '',
   email: '',
@@ -104,6 +107,7 @@ export const buildRequest = (values: FormValues, url: string): AuditStartBody =>
   if (Object.keys(persona).length) req.persona = persona;
 
   if (values.teamSize && TEAM_SIZES.includes(values.teamSize)) req.teamSize = values.teamSize;
+  if (isRegion(values.region)) req.region = values.region;
   const timeSink = clip(values.timeSink, LIMITS.timeSink);
   if (timeSink) req.timeSink = timeSink;
   const tools = clip(values.tools, LIMITS.tools);

@@ -14,6 +14,8 @@ import { createIpHasher, originAllowed, rateLimitSubject, securityHeaders, sendE
 import type { runAudit } from './audit/runAudit.js';
 import type { CrmSync } from './crm/sync.js';
 import { MemoryFeedbackStore } from './feedback/store.js';
+import { MemoryMetricsStore } from './metrics/store.js';
+import type { MetricsStore } from './metrics/store.js';
 import type { FeedbackStore } from './feedback/store.js';
 import { createSessionStore } from './http/sessions.js';
 import { createEmailChecker } from './lead/email.js';
@@ -23,6 +25,7 @@ import type { AuditLedger } from './lead/ledger.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import type { AuditEntry } from './routes/audit.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerEventRoutes } from './routes/events.js';
 import { registerFeedbackRoutes } from './routes/feedback.js';
 import { registerShareRoutes, ROBOTS_NONE } from './routes/share.js';
 import { MemoryReportStore } from './share/store.js';
@@ -34,6 +37,8 @@ export const BODY_LIMIT = 8 * 1024;
 export const CACHE_MAX_ENTRIES = 500;
 export const RESULT_LIMIT_HOURLY = 30;
 export const FEEDBACK_LIMIT_HOURLY = 60;
+/** Per IP; generous because an office can share one address. Counting is a speed bump, not a control. */
+export const EVENT_LIMIT_HOURLY = 300;
 export const SHARE_WRITE_LIMIT_HOURLY = 10;
 export const SHARE_READ_LIMIT_HOURLY = 60;
 export const ADMIN_LIMIT_HOURLY = 10;
@@ -97,6 +102,8 @@ export interface AppDeps {
   aiMaxConcurrent?: number;
   /** Idea feedback store; default in memory. */
   feedback?: FeedbackStore;
+  /** Daily counters (spec 001); default in memory. */
+  metrics?: MetricsStore;
   /** Shared report store; undefined → in memory, null → sharing off. SHARE_LINKS=off always wins. */
   reports?: ReportStore | null;
   /** Test seam: how long a share waits for the AI results (15 s). */
@@ -191,6 +198,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
   const ledger = deps.ledger ?? new MemoryLedger({ now });
   const crm = deps.crm ?? null;
   const feedback = deps.feedback ?? new MemoryFeedbackStore({ now });
+  const metrics = deps.metrics ?? new MemoryMetricsStore({ now });
   const reports: ReportStore | null =
     config.shareLinks === 'off'
       ? null
@@ -210,6 +218,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     ledger: ledger.kind,
     crm: !!crm,
     feedback: feedback.kind,
+    metrics: metrics.kind,
     shares: reports ? reports.kind : 'off',
     mail: !!mailer,
     search: !!research,
@@ -249,6 +258,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
       now,
     },
     sessions,
+    metrics,
     features,
     ...(deps.runAudit ? { runAudit: deps.runAudit } : {}),
   });
@@ -262,6 +272,14 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     now,
   });
 
+  registerEventRoutes(app, {
+    metrics,
+    sessions,
+    limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: EVENT_LIMIT_HOURLY }], now }),
+    ipKey,
+    checkOrigin,
+  });
+
   if (reports) {
     registerShareRoutes(app, {
       store: reports,
@@ -273,6 +291,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
       publicOrigin: config.publicOrigin,
       retentionDays: config.shareRetentionDays,
       now,
+      metrics,
       ...(deps.snapshotWaitMs !== undefined ? { snapshotWaitMs: deps.snapshotWaitMs } : {}),
       email: mailer
         ? {
@@ -292,6 +311,8 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     registerAdminRoutes(app, {
       token: config.adminToken,
       feedback,
+      metrics,
+      now,
       reports,
       research,
       limiter: new SlidingWindowLimiter({ windows: [{ ms: HOUR, max: ADMIN_LIMIT_HOURLY }], now }),

@@ -104,6 +104,12 @@ describe('guessIndustry', () => {
     expect(guessIndustry([page({ title: 'Acme online shop', text: 'Shop now. Add to basket. Free returns.' })])).toBe('ecommerce-retail');
   });
 
+  it('only the first part of a title counts: evidence past the cap is ignored', () => {
+    const evidence = 'shop now add to basket';
+    expect(guessIndustry([page({ title: `${evidence} ${'x '.repeat(400)}`, text: '' })])).toBe('ecommerce-retail');
+    expect(guessIndustry([page({ title: `${'x '.repeat(400)} ${evidence}`, text: '' })])).toBeNull();
+  });
+
   it('linear on large hostile input', () => {
     const big = 'law '.repeat(200_000) + '-'.repeat(200_000);
     const t = Date.now();

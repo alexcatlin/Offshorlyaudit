@@ -15,9 +15,11 @@ import { CHECK_TEXT } from '../../src/content/checkText.js';
 import {
   COPY,
   CONFIDENCE_LABELS,
+  CONFIDENCE_MEANINGS,
   EFFICIENCY_LABELS,
   ERROR_COPY,
   LOADING_STAGES,
+  REGION_OPTIONS,
   TEAM_SIZE_OPTIONS,
 } from '../../src/content/copy.js';
 import { ERROR_CODES } from '../../src/lib/errors.js';
@@ -37,8 +39,10 @@ const visitorStrings = (): string[] => [
   ...collectStrings(COPY),
   ...collectStrings(EFFICIENCY_LABELS),
   ...collectStrings(CONFIDENCE_LABELS),
+  ...collectStrings(CONFIDENCE_MEANINGS),
   ...collectStrings(LOADING_STAGES),
   ...collectStrings(TEAM_SIZE_OPTIONS),
+  ...collectStrings(REGION_OPTIONS),
   ...ERROR_CODES.map((c) => ERROR_COPY[c]('The site did not respond.', 120)),
   ...collectStrings(PROOFS),
   ...collectStrings(CTA),

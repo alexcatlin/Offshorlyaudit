@@ -1,7 +1,7 @@
 // The CRM Note for one audit (Amendment 3 §4): title and markdown body. Pure.
 import { INDUSTRIES } from '../../shared/industries.js';
 import { CTA } from '../../shared/services.js';
-import type { AiResult, AuditReport, AuditRequest, BuyerFitResult, CheckResult, FixItem } from '../../shared/types.js';
+import { REGIONS, type AiResult, type AuditReport, type AuditRequest, type BuyerFitResult, type CheckResult, type FixItem } from '../../shared/types.js';
 
 export interface CrmLead {
   /** Lowercased as typed (not the canonical gate form). */
@@ -89,6 +89,7 @@ export const buildNote = ({ lead, report, buyerFit, ai, request, costUsd }: Note
   if (industry) about.push(`**Industry:** ${industry}`);
   if (request?.businessType) about.push(`**Business type:** ${line(request.businessType, 100)}`);
   if (request?.teamSize) about.push(`**Team size:** ${line(request.teamSize, 20)}`);
+  if (request?.region) about.push(`**Based in:** ${line(REGIONS[request.region], 40)}`);
   if (request?.tools) about.push(`**Tools:** ${line(request.tools, 150)}`);
   if (request?.timeSink) about.push(`**What eats the week:** ${line(request.timeSink, 200)}`);
   if (about.length) out.push('', ...about);

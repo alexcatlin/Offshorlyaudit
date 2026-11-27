@@ -13,8 +13,10 @@ import type {
   Owner,
   Status,
   IndustryId,
+  Region,
   TeamSize,
 } from '../../shared/types.js';
+import { REGIONS } from '../../shared/types.js';
 import { INDUSTRIES, INDUSTRY_IDS } from '../../shared/industries.js';
 import { CTA } from '../../shared/services.js';
 
@@ -38,6 +40,11 @@ export const TEAM_SIZE_OPTIONS: readonly { value: TeamSize; label: string }[] = 
   { value: '51-200', label: '51–200 people' },
   { value: '200+', label: 'More than 200 people' },
 ];
+
+export const REGION_OPTIONS: readonly { value: Region; label: string }[] = (Object.keys(REGIONS) as Region[]).map((value) => ({
+  value,
+  label: REGIONS[value],
+}));
 
 /** Staged messages while the AI tab is pending (Amendment 4 §7). */
 export const AI_LOADING_STAGES: readonly LoadingStage[] = [
@@ -71,6 +78,12 @@ export const EFFICIENCY_LABELS: Record<Efficiency, string> = {
 export const CONFIDENCE_LABELS: Record<Confidence, string> = {
   likely: 'Likely fit',
   'worth-checking': 'Worth checking',
+};
+
+/** First line of "Why we think so": what the pill means. Industry ideas are always worth-checking, so no "your site" there. */
+export const CONFIDENCE_MEANINGS: Record<Confidence, string> = {
+  likely: 'Rated likely fit: your site or your answers point to this directly.',
+  'worth-checking': 'Rated worth checking: the evidence is indirect, so it is best confirmed in a conversation.',
 };
 
 export const CUSTOMERS_LABELS: Record<Customers, string> = {
@@ -110,8 +123,9 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 /** Report actions row: Save as PDF, Copy link, and (Phase 4) email (Amendment 5). */
 const ACTIONS = {
   pdf: 'Save as PDF',
-  pdfHint: "Choose 'Save as PDF' as the printer.",
-  waiting: 'Ready when the AI ideas finish.',
+  /** In the status line under the row, after Save as PDF is clicked. */
+  pdfHint: "In the print window, choose 'Save as PDF' as the destination.",
+  waiting: 'Available when the report has finished loading.',
   printOrphan: "Open this page from the report's Save as PDF button.",
   copyLink: 'Copy link',
   linkCopied: (date: string) => `Link copied. Anyone with it can view this report, including your answers, until ${date}.`,
@@ -165,8 +179,14 @@ export const ERROR_COPY: Record<ErrorCode, (serverError: string, retryAfterSec?:
 
 export const COPY = {
   hero: {
-    title: 'Does your website win buyers, and where could AI save you time?',
-    sub: 'A free check of how your site lands with the buyers you want, its security and search basics, and where AI could take repetitive work off your team. Website results usually take under 30 seconds; buyer fit and AI ideas follow on the report.',
+    title: 'Does your website win the customers you want, and where could AI save you time?',
+    sub: 'Free, and website results usually take under 30 seconds; customer fit and AI ideas follow on the report.',
+    getsLabel: 'What you get',
+    gets: [
+      'A customer-fit score, with quotes from your own pages',
+      'Security, search (SEO) and speed checks, with a fix-first list',
+      'AI ideas matched to your business',
+    ],
   },
 
   form: {
@@ -183,25 +203,27 @@ export const COPY = {
     businessHelp: 'A few quick answers make the AI ideas more specific to how your team works.',
     buyerToggle: 'Who are you trying to win?',
     buyerHelp:
-      "Describe the buyer you want to attract and we'll show you what they see. Leave it blank and we'll work out who your site appears to be aimed at.",
+      "Describe the customer you want to attract and we'll show you what they see. Leave it blank and we'll work out who your site appears to be aimed at.",
     seeExample: 'See example',
     clearExample: 'Clear',
     businessTypeLabel: 'What kind of business are you?',
     businessTypePlaceholder: 'For example: family law firm',
-    businessTypeHelp: 'In your own words. We use it for the AI ideas and to judge your site from your buyer’s point of view.',
-    roleLabel: 'Buyer’s role',
+    businessTypeHelp: 'In your own words. We use it for the AI ideas and to judge your site from your customer’s point of view.',
+    roleLabel: 'Their job title',
     rolePlaceholder: 'For example: Founder',
-    sizeLabel: 'Buyer’s company size',
+    sizeLabel: 'Their company size',
     sizePlaceholder: 'For example: 20-person agency',
-    sectorLabel: 'Buyer’s sector (theirs, not yours)',
+    sectorLabel: 'Their industry (not yours)',
     sectorPlaceholder: 'For example: B2B SaaS',
-    triggerLabel: 'Why the buyer is looking now',
+    triggerLabel: 'Why they are looking now',
     triggerPlaceholder: 'For example: outgrown freelancers',
     timeSinkCount: (used: number, max: number) => `${used} of ${max} characters`,
     toolsLabel: 'Which tools does your team use day to day?',
     toolsPlaceholder: 'For example: spreadsheets, a CRM, an accounts package, shared inbox',
     teamSizeLabel: 'How big is your team?',
     teamSizePlaceholder: 'Choose a size',
+    regionLabel: 'Where are you based?',
+    regionNotSure: 'Not sure / prefer not to say',
     timeSinkLabel: "What eats most of your team's week?",
     timeSinkPlaceholder: 'For example: typing up quotes, chasing invoices, answering the same customer emails',
     timeSinkMaxLength: 200,
@@ -211,11 +233,10 @@ export const COPY = {
     emailInvalid: "That doesn't look like an email address. Please check it and try again.",
     nameLabel: 'Your name',
     namePlaceholder: 'For example: Sam Taylor',
-    /** Under the email/name row; followed by the privacy policy link. */
     leadNotice:
       "We'll add your email, the site you audit, your answers and its results to Offshorly's CRM so we can follow up about this audit. One free audit per email.",
     marketingOptIn: 'Email me occasional ideas and offers from Offshorly. You can unsubscribe at any time.',
-    submit: 'Run the audit',
+    submit: 'Run my free audit',
     privacyNotice:
       "We read the public pages of the site you enter and use Anthropic's Claude to analyse them, with any answers you add. Your email is never sent to Anthropic.",
     privacyLinkLabel: 'Privacy policy',
@@ -224,14 +245,20 @@ export const COPY = {
 
   loading: {
     heading: 'Running your audit',
-    sub: 'The website audit takes a few seconds. Buyer fit and AI ideas follow on the report.',
+    sub: 'The website audit takes a few seconds. Customer fit and AI ideas follow on the report.',
   },
 
   report: {
     heading: (domain: string) => `Website audit for ${domain}`,
     tabsLabel: 'Report sections',
     tabWebsite: 'Website audit',
-    tabAi: 'AI opportunities',
+    tabAi: 'Where AI can help',
+    /** One line under each tab label; short enough for a 375px screen. */
+    tabWebsiteHint: 'Customer fit, security, speed',
+    tabAiHint: 'Ideas for your business',
+    /** The unselected tab's hint is an action. */
+    tabWebsiteAction: 'See your scores',
+    tabAiAction: (n: number) => `See ${n} ${n === 1 ? 'idea' : 'ideas'}`,
     tabAiPending: 'Still working',
     tabAiCount: (n: number) => `${n} ${n === 1 ? 'idea' : 'ideas'}`,
     pending: 'Still reading your pages…',
@@ -243,15 +270,15 @@ export const COPY = {
     eyesOf: 'Assessed through the eyes of:',
     whyLooking: "Why they're looking:",
     inferredBuyer:
-      'You left some buyer details blank, so we filled them in with the buyer your site appears to be aimed at.',
+      'You left some customer details blank, so we filled them in with the customer your site appears to be aimed at.',
     buyerFitUnavailable:
-      "We couldn't assess buyer fit this time, so the measured checks below stand alone.",
+      "We couldn't assess customer fit this time, so the measured checks below stand alone.",
     buyerFitThin:
-      'Your homepage came back almost empty when we read it, so we skipped the buyer-fit assessment. The measured checks below still stand.',
+      'Your homepage came back almost empty when we read it, so we skipped the customer-fit assessment. The measured checks below still stand.',
   },
 
   verdict: {
-    scoreLabel: 'Buyer fit',
+    scoreLabel: 'Customer fit',
     outOf: 'out of 100',
     oneSentence: 'In one sentence',
     brutalTruth: 'The brutal truth',
@@ -270,40 +297,43 @@ export const COPY = {
 
   whatsWorking: {
     heading: "What's working",
-    empty: 'Nothing stood out as a clear strength for this buyer.',
+    empty: 'Nothing stood out as a clear strength for this customer.',
   },
 
   buyerFit: {
-    heading: 'Buyer fit',
+    heading: 'Customer fit',
     summary: (n: number, weakest: string, score: number) =>
-      `${n} things this buyer looks for. Weakest: ${weakest} (${score}/10)`,
+      `${n} things this customer looks for. Weakest: ${weakest} (${score}/10)`,
     intro:
-      'Each criterion is scored out of 10 from what your pages actually say. The overall score is an average in which critical criteria count three times, important ones twice and supporting ones once, so it can differ slightly from a simple average.',
+      'Each criterion is scored out of 10 from what your pages actually say. The overall score is an average in which the criteria that matter most to this customer count more: critical three times, important twice and supporting once, so it can differ slightly from a simple average.',
     weight: { high: 'Critical', medium: 'Important', low: 'Supporting' },
     outOfTen: (n: number) => `${n} out of 10`,
     viewPage: (label: string) => `See it on: ${label}`,
-    mismatchHeading: 'Where image and reality part',
-    mismatchSummary: (n: number) => `${n} ${n === 1 ? 'place' : 'places'} your site undercuts itself`,
-    actionsHeading: 'Action plan for winning this buyer',
-    actionsSummary: (now: number, later: number) => `${now} to do now, ${later} longer-term`,
-    doNow: 'Do now',
-    longerTerm: 'Longer-term shifts',
-    fixSectionLabel: 'Buyer fit',
+    mismatchHeading: 'Where your site undercuts itself',
+    mismatchSummary: (n: number) => `${n} ${n === 1 ? 'place that weakens' : 'places that weaken'} your message`,
+    actionsHeading: 'How to win this customer',
+    actionsSummary: (now: number, later: number) => {
+      const parts = [now && `${now} to do first`, later && `${later} to do later`].filter(Boolean).join(', ');
+      return `${plural(now + later, 'change', 'changes')}: ${parts}`;
+    },
+    doNow: (n: number) => `Do first (${n})`,
+    longerTerm: (n: number) => `Do later (${n})`,
+    fixSectionLabel: 'Customer fit',
   },
 
   detail: {
     show: 'Show detail',
     hide: 'Hide detail',
-    heading: 'The detail',
+    messageHeading: 'Content checks',
+    technicalHeading: 'Technical checks',
   },
 
   header: {
-    auditedOn: (date: string) => `Audited on ${date}`,
+    auditedOn: (date: string) => `Audited ${date}`,
     whatWeThinkYouDo: 'What we think you do',
   },
 
   ai: {
-    heading: 'Where AI could help',
     intro: "Ideas to test in a free consultation, not promises. We've only read your public website.",
     whyWeThinkSo: 'Why we think so',
     howAiCouldHelp: 'How AI could help',
@@ -362,8 +392,9 @@ export const COPY = {
   },
 
   security: {
-    heading: 'Security',
-    intro: 'Basic protective settings anyone can see from outside, plus email forgery protection.',
+    heading: 'Website security',
+    intro:
+      'We checked the security settings your site shows to every visitor, and whether your domain stops other people sending fake emails in your name. We did not try to break in.',
   },
 
   wordpress: {
@@ -413,6 +444,7 @@ export const COPY = {
     biggestGap: 'Biggest gap',
     workingFor: 'Working for you',
     workingAgainst: 'Working against you',
+    why: 'Why:',
   },
 
   checks: {
@@ -425,20 +457,18 @@ export const COPY = {
   offshorlyCanHelp: 'Offshorly can help with this',
 
   sectionLabels: {
-    security: 'Security',
+    security: 'Website security',
     health: 'Website health',
-    'buyer-fit': 'Buyer fit',
+    'buyer-fit': 'Customer fit',
   },
 
   whatWeRead: {
-    heading: 'What we read',
+    heading: 'Pages we analysed',
     summary: (n: number) => `${n} ${n === 1 ? 'page' : 'pages'} from your public website`,
     /** Phase 5: only when web-search results were used for this report. */
     /** `phrase` is the in-sentence form (industryPhrase), e.g. "construction and trades". */
     searched: (phrase: string) => `We also searched the web for examples from ${phrase}. Nothing about you or your site was sent.`,
   },
-
-  attributionsHeading: 'Data sources',
 
   cta: {
     heading: 'Want to test one of these ideas?',
@@ -446,7 +476,7 @@ export const COPY = {
     secondaryHeading: 'Talk it through with us',
     secondaryText: "Book a call, or tell us what you're working on.",
     pitchHeading: 'Talk to us about where AI would pay off',
-    websiteHeading: 'Want a hand with any of this?',
+    websiteHeading: 'Want help with these fixes?',
     websiteText:
       "We build and look after websites, and we'll tell you straight which fixes matter and which can wait.",
     primary: CTA.consultation.label,
@@ -454,17 +484,26 @@ export const COPY = {
   },
 
   footer: {
-    whatWeRead: 'What we read',
-    disclaimer:
-      'Passive checks only: we look at what your site shows any visitor. This is not a penetration test.',
+    heading: 'About this report',
+    disclaimer: 'We only look at what your site shows any visitor. This is not a penetration test.',
+    ai: "Your pages and answers are analysed by Anthropic's Claude. Your email is never sent to Anthropic.",
+    crm: 'We keep your email, your site, your answers and a summary of the results in our CRM so we can follow up.',
+    /** The <summary> of the folded list. */
+    more: 'How we handle your data',
+    savedLabel: 'Saved reports',
     /** When sharing is off. */
-    privacy:
-      "We don't save reports or create share links. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Results are otherwise held briefly in memory. If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached. The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.",
+    savedOff: "We don't save reports or create share links. Results are otherwise held briefly in memory.",
     /** When sharing is on (Amendment 5). */
-    privacyShare: (days: number) =>
-      `We only save a report if you share or email it. A saved report has no email address attached, can be seen by anyone with its link, is hidden from search engines, and is deleted after ${days} days or as soon as you delete the link. We keep your email, the site you audited, your answers and a summary of the results in our CRM to follow up. Otherwise results are held briefly in memory. If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached. The text of the pages we read and any answers you add are sent to Anthropic's Claude for analysis; your email is not.`,
-    /** Appended to the privacy text when report email is on (Phase 4). */
+    savedOn: (days: number) =>
+      `We only save a report if you share or email it. A saved report has no email address attached, can be seen by anyone with its link, is hidden from search engines, and is deleted after ${days} days or as soon as you delete the link. Otherwise results are held briefly in memory.`,
+    ratingsLabel: 'Idea ratings',
+    ratings: "If you rate an idea, we keep your rating, the idea and the site's address for up to a year, with no email attached.",
+    countsLabel: 'Usage counts',
+    counts: 'We also count audits, report views and booking-button clicks as daily totals, with nothing that identifies you.',
+    /** Only when report email is on (Phase 4). */
+    emailLabel: 'Emailed reports',
     privacyEmail: 'If you ask us to email the report, we send it to the address you entered through our email provider, Resend.',
+    sourcesLabel: 'Data sources',
     newAudit: 'Run another audit',
   },
 
@@ -509,6 +548,6 @@ export const COPY = {
   print: {
     header: (domain: string, date: string) => `Website audit for ${domain} · ${date} · Offshorly`,
     websiteHeading: 'Website audit',
-    aiHeading: 'AI opportunities',
+    aiHeading: 'Where AI can help',
   },
 } as const;

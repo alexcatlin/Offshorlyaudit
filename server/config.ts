@@ -52,6 +52,8 @@ export interface Config {
   /** Idea feedback JSONL on the persistent disk; null = in memory. */
   feedbackPath: string | null;
   feedbackRetentionDays: number;
+  /** Daily counters (spec 001) JSON file on the persistent disk; null = in memory. */
+  metricsPath: string | null;
   /** Bearer token for /api/admin/*; null = admin routes off (404). ≥32 characters. */
   adminToken: string | null;
   /** 'off' = no share store; share and email are hidden. */
@@ -331,6 +333,7 @@ export const loadConfig = (env: Env = process.env): Config => {
     feedbackPath: str(env, 'FEEDBACK_PATH'),
     // Capped at a year: the footer and privacy copy promise "up to a year" (src/content/copy.ts).
     feedbackRetentionDays: int(env, 'FEEDBACK_RETENTION_DAYS', 365, 1, 365),
+    metricsPath: str(env, 'METRICS_PATH'),
     adminToken,
     shareLinks: shareRaw,
     reportsDir: str(env, 'REPORTS_DIR'),

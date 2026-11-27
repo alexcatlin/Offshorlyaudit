@@ -4,7 +4,7 @@ import { h, type ComponentChildren, type VNode } from 'preact';
 import { toAuditError, parseRetryAfter, isErrorCode, ERROR_CODES } from '../../src/lib/errors.js';
 import { buildRequest, checkEmailInput, EMPTY_FORM, normaliseUrlInput } from '../../src/lib/form.js';
 import { ERROR_COPY } from '../../src/content/copy.js';
-import { CTA } from '../../shared/services.js';
+import { bookingUrl, CTA } from '../../shared/services.js';
 import { Cta } from '../../src/components/Cta.js';
 import { EmailUsedAlert } from '../../src/components/Form.js';
 import {
@@ -313,16 +313,17 @@ const textOf = (node: unknown): string => {
 };
 
 describe('consultation CTA', () => {
-  const calLinks = (tree: unknown) => findAll(tree, (el) => el.type === 'a' && el.props.href === CTA.consultation.url);
+  const calLinks = (tree: unknown) => findAll(tree, (el) => el.type === 'a' && String(el.props.href).startsWith(`${CTA.consultation.url}?utm_source=offshorly-audit&utm_medium=report&utm_content=`));
 
   it('is the Cal.com 30-minute link in a new tab, with no personal data in the URL', () => {
-    expect(CTA.consultation.url).toBe('https://cal.com/offshorly/30min');
+    expect(CTA.consultation.url).toBe('https://tidycal.com/offshorly/30-minute-meeting-1k2qnz9-m7jl6xl');
     for (const variant of ['ai', 'pitch', 'website'] as const) {
       const links = calLinks(expand(h(Cta, { variant })));
       expect(links, variant).toHaveLength(1);
       const a = links[0]!;
       expect(a.props.target).toBe('_blank');
       expect(a.props.rel).toBe('noopener');
+      expect(a.props.href, variant).toBe(bookingUrl(variant));
       expect(textOf(a)).toContain(CTA.consultation.label);
     }
   });
@@ -332,6 +333,7 @@ describe('consultation CTA', () => {
     const links = calLinks(tree);
     expect(links).toHaveLength(1);
     expect(links[0]!.props.target).toBe('_blank');
+    expect(links[0]!.props.href).toBe(bookingUrl('blocked'));
     expect(findAll(tree, (el) => el.type === 'a' && el.props.href === CTA.contact.url)).toHaveLength(1);
     expect(textOf(tree)).not.toMatch(/\.(com|co\.uk|org)\b/);
   });

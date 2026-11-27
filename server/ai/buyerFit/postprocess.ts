@@ -20,8 +20,8 @@ export const MAX_ACTIONS = 6;
 export const MAX_CRITERIA = 6;
 export const MAX_MISMATCHES = 3;
 
-export const VERDICT_SUMMARY_FALLBACK = "We couldn't sum up this buyer's first impression confidently from these pages.";
-export const BRUTAL_TRUTH_FALLBACK = 'See the criteria below for where this buyer would hesitate.';
+export const VERDICT_SUMMARY_FALLBACK = "We couldn't sum up this customer's first impression confidently from these pages.";
+export const BRUTAL_TRUTH_FALLBACK = 'See the criteria below for where this customer would hesitate.';
 
 const LVLS: readonly Lvl[] = ['high', 'medium', 'low'];
 const OWNERS: readonly Owner[] = ['leadership', 'marketing', 'developer'];

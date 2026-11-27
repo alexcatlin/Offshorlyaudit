@@ -5,7 +5,7 @@
 // sees the server's pattern text, never the model's.
 import { GENERIC_PATTERNS, INDUSTRIES, INDUSTRY_IDS, OTHER_INDUSTRY } from '../../../shared/industries.js';
 import { OPPORTUNITY_SERVICE_IDS, PROOFS, SERVICES } from '../../../shared/services.js';
-import type { ProofId } from '../../../shared/types.js';
+import { REGIONS, type ProofId } from '../../../shared/types.js';
 import { dataRule, fence, fencePages, sanitiseData, type Boundary } from '../prompt.js';
 import { redactEmails } from '../text.js';
 import type { OpportunitiesInput } from '../types.js';
@@ -80,6 +80,7 @@ const detectedBlock = (input: OpportunitiesInput, boundary: Boundary): string =>
     ...(lines.length ? lines : ['- none']),
     `SaaS count (excluding analytics): ${input.saasCount}`,
     'Analytics tools are context only, never a basis on their own.',
+    'Form builders (category forms) are context only: never list them in techIds.',
   ].join('\n');
 };
 
@@ -92,6 +93,9 @@ const answersBlock = (input: OpportunitiesInput, boundary: Boundary): string => 
   if (businessType) lines.push(`Business type (in their words): ${businessType}`);
   if (input.industry) lines.push(`Industry (chosen by the visitor): ${INDUSTRIES[input.industry].label} (industryId ${input.industry})`);
   if (input.teamSize) lines.push(`Team size: ${input.teamSize}`);
+  if (input.region) {
+    lines.push(`Based in (context only; say nothing about local markets, competitors or rules from it): ${REGIONS[input.region]}`);
+  }
   const tools = visitorLine(input.tools);
   if (tools) lines.push(`Tools the team uses day to day: ${tools}`);
   const timeSink = visitorLine(input.timeSink);
@@ -133,7 +137,7 @@ const TASK = [
   "(c) Industry ideas (source \"industry\"), 1-2: from the playbook patterns for that industry (GENERIC for 'other'), not already covered by a site idea. patternId is required. Tailor process and aiApproach to this business using the business type, team size and tools; leave quotes empty. If an INDUSTRY SEARCH RESULT supports the idea, give its id in sourceIds; site ideas leave sourceIds empty.",
   '(d) For every idea, give industryContext: how businesses of this type commonly handle this work, as a general pattern. Leave it empty if you have nothing useful to say.',
   '(e) Map each idea to one service id using the mapping rules; optionally add a proof id allowed for that service.',
-  '(f) For each, give measureFirst: what to measure before building anything. Give notWorthIt: one area that is probably not worth automating here, and why.',
+  '(f) aiApproach says what the AI would do, as a description ("An assistant reads each enquiry, tags it and drafts a reply for a person to approve"), never as an instruction to test, try or pilot something. For each, give measureFirst: what to measure before building anything. Give notWorthIt: one area that is probably not worth automating here, and why.',
   '(g) industryExamples, 0-3: only when INDUSTRY SEARCH RESULTS are given and this business is in that industry. Each is one sentence, 30 words or fewer, citing 1-2 sourceIds and stating only what the cited results say. Otherwise leave it empty.',
   'Write every field in UK English. No figures for this business.',
 ].join('\n');

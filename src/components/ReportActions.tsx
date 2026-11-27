@@ -32,6 +32,11 @@ export const isReportSettled = (r: AuditReport): boolean => r.aiStatus !== 'pend
 
 const errorText = (e: unknown): string => (e instanceof AuditError ? e.message : C.shareUnavailable);
 
+const shareText = (s: ShareState): string => {
+  if (s.kind === 'shared') return (s.copied ? C.linkCopied : C.linkReady)(formatDate(s.expiresAt));
+  return s.kind === 'message' ? s.text : '';
+};
+
 /** Email errors: already sent and session expired have their own words; anything else → "copy the link". */
 export const emailErrorText = (e: unknown): string => {
   if (e instanceof AuditError) {
@@ -45,9 +50,12 @@ export const emailErrorText = (e: unknown): string => {
 export const ReportActions = ({ report, mode, onPdf, features, session, email }: ReportActionsProps) => {
   const [share, setShare] = useState<ShareState>({ kind: 'idle' });
   const [mail, setMail] = useState<EmailState>({ kind: 'idle' });
+  /** After Save as PDF: the status line says how to save; any share action replaces it. */
+  const [pdfNote, setPdfNote] = useState(false);
   const canEmail = mode === 'live' && !!features?.email && !!features.share && !!session && !!email;
   const inputRef = useRef<HTMLInputElement>(null);
   const settled = isReportSettled(report);
+  const statusText = pdfNote ? C.pdfHint : shareText(share);
   const canShare = mode === 'live' && !!features?.share && !!session;
 
   // Clipboard refused (e.g. inside an iframe without clipboard-write): select the URL instead.
@@ -57,6 +65,7 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
 
   const onCopy = async () => {
     if (!session) return;
+    setPdfNote(false);
     setShare({ kind: 'busy' });
     try {
       const res = await createShare(session);
@@ -75,6 +84,7 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
 
   const onDelete = async () => {
     if (!session) return;
+    setPdfNote(false);
     try {
       await deleteShare(session);
       setShare({ kind: 'message', text: C.linkDeleted });
@@ -98,7 +108,15 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
   return (
     <div class="oa-actions">
       <div class="oa-actions__row">
-        <button type="button" class="oa-button oa-button--outline oa-button--small" disabled={!settled} onClick={onPdf}>
+        <button
+          type="button"
+          class="oa-button oa-button--outline oa-button--small"
+          disabled={!settled}
+          onClick={() => {
+            setPdfNote(true);
+            onPdf();
+          }}
+        >
           {C.pdf}
         </button>
         {canShare && (
@@ -123,7 +141,7 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
             {C.email}
           </button>
         )}
-        <span class="oa-actions__hint">{settled ? C.pdfHint : C.waiting}</span>
+        {!settled && <span class="oa-actions__hint">{C.waiting}</span>}
       </div>
       {share.kind === 'shared' && (
         <div class="oa-actions__share">
@@ -164,7 +182,7 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
         </p>
       )}
       <p class="oa-actions__status" role="status">
-        {share.kind === 'shared' ? (share.copied ? C.linkCopied : C.linkReady)(formatDate(share.expiresAt)) : share.kind === 'message' ? share.text : ''}
+        {statusText}
       </p>
     </div>
   );

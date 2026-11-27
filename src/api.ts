@@ -6,6 +6,7 @@
 //   POST   /api/share / DELETE /api/share → ShareCreated / 204
 //   GET    /api/share/:shareId            → SharedReport
 //   POST   /api/share/email               → EmailReportSent (202; Phase 4)
+//   POST   /api/event                     → 204 (counted as a daily total; spec 001)
 // The session token only ever travels in a JSON body, never in a URL.
 import type {
   AiResult,
@@ -14,10 +15,14 @@ import type {
   BuyerFitResult,
   EmailReportBody,
   EmailReportSent,
+  EventBody,
+  EventName,
   FeedbackBody,
+  Placement,
   ShareCreated,
   SharedReport,
 } from '../shared/types.js';
+import { BLOCKED_PLACEMENT } from '../shared/types.js';
 import { AuditError, networkError, toAuditError } from './lib/errors.js';
 
 export interface HttpResult {
@@ -39,6 +44,7 @@ const fetchTransport: Transport = async (method, path, body) => {
     credentials: 'same-origin',
     headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    keepalive: path === '/api/event',
     signal: AbortSignal.timeout(TIMEOUT_MS[method]),
   });
   let parsed: unknown = null;
@@ -114,3 +120,24 @@ export const fetchShared = (shareId: string): Promise<SharedReport> =>
   call<SharedReport>('GET', `/api/share/${encodeURIComponent(shareId)}`);
 
 export { AuditError };
+
+/** What this page counts as: a direct report (its session), the shared page, or neither. */
+type TrackContext = { session: string } | { shared: true } | null;
+let trackContext: TrackContext = null;
+export const setTrackContext = (c: TrackContext): void => {
+  trackContext = c;
+};
+
+/**
+ * Counts a visitor event (spec 001). Fire and forget: never throws, never delays the click (the
+ * booking links open in a new tab), and a blocked or failed call is silent. Nothing about the
+ * visitor is sent: the session token proves a live report, the server stores only totals.
+ */
+export const track = (event: EventName, placement?: Placement): void => {
+  let body: EventBody | null = null;
+  if (placement === BLOCKED_PLACEMENT) body = { event, placement };
+  else if (trackContext && 'session' in trackContext) body = { event, ...(placement ? { placement } : {}), session: trackContext.session };
+  else if (trackContext && event === 'cta_click' && placement) body = { event, placement, shared: true };
+  if (!body) return;
+  void send('POST', '/api/event', body).catch(() => undefined);
+};

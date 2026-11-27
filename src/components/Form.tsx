@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
-import { CTA } from '../../shared/services.js';
+import { bookingUrl, CTA } from '../../shared/services.js';
 import type { ErrorCode, TeamSize } from '../../shared/types.js';
-import { COPY, EXAMPLE_BUYER, INDUSTRY_OPTIONS, TEAM_SIZE_OPTIONS } from '../content/copy.js';
+import { track } from '../api.js';
+import { COPY, EXAMPLE_BUYER, INDUSTRY_OPTIONS, REGION_OPTIONS, TEAM_SIZE_OPTIONS } from '../content/copy.js';
 import { checkEmailInput, LIMITS, normaliseUrlInput, type FormValues } from '../lib/form.js';
 import { ExternalLink } from './ui.js';
 
@@ -52,7 +53,7 @@ export const EmailUsedAlert = ({ message }: { message: string }) => (
   <div class="oa-alert oa-alert--info" role="alert">
     <p>{message}</p>
     <div class="oa-alert__actions">
-      <ExternalLink class="oa-button oa-button--primary" href={CTA.consultation.url}>
+      <ExternalLink class="oa-button oa-button--primary" href={bookingUrl('blocked')} onClick={() => track('cta_click', 'blocked')}>
         {CTA.consultation.label}
       </ExternalLink>
       <ExternalLink class="oa-alert__link" href={CTA.contact.url}>
@@ -102,7 +103,7 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
   const [emailError, setEmailError] = useState<string | null>(errorCode === 'email_invalid' ? error : null);
   const formError = errorCode === 'email_invalid' ? null : error;
   const hasBuyer = !!(initial.role || initial.size || initial.sector || initial.trigger);
-  const hasBusiness = !!(initial.businessType || initial.teamSize || initial.tools || initial.timeSink);
+  const hasBusiness = !!(initial.businessType || initial.teamSize || initial.region || initial.tools || initial.timeSink);
   const [buyerOpen, setBuyerOpen] = useState(hasBuyer);
   const [businessOpen, setBusinessOpen] = useState(hasBusiness);
   const urlRef = useRef<HTMLInputElement>(null);
@@ -155,6 +156,11 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
       <div class="oa-hero__inner">
         <h1 class="oa-hero__title">{COPY.hero.title}</h1>
         <p class="oa-hero__sub">{COPY.hero.sub}</p>
+        <ul class="oa-hero__gets" aria-label={COPY.hero.getsLabel}>
+          {COPY.hero.gets.map((g) => (
+            <li key={g}>{g}</li>
+          ))}
+        </ul>
 
         <form class="oa-form" onSubmit={submit} noValidate aria-describedby={formError ? formErrId : undefined}>
           {formError &&
@@ -199,6 +205,51 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
             </p>
           </div>
 
+          <div class="oa-grid-2 oa-lead-row">
+            <div class="oa-field">
+              <label class="oa-label" for={fid('email')}>
+                {F.emailLabel}
+              </label>
+              <input
+                ref={emailRef}
+                id={fid('email')}
+                class={emailError ? 'oa-input has-error' : 'oa-input'}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellcheck={false}
+                required
+                maxLength={LIMITS.email}
+                placeholder={F.emailPlaceholder}
+                value={v.email}
+                onInput={set('email')}
+                aria-invalid={emailError ? true : undefined}
+                aria-describedby={emailError ? `${emailErrId} ${leadNoticeId}` : leadNoticeId}
+              />
+              {emailError && (
+                <p class="oa-field-error" id={emailErrId}>
+                  {emailError}
+                </p>
+              )}
+            </div>
+            <div class="oa-field">
+              <label class="oa-label" for={fid('name')}>
+                {F.nameLabel} <span class="oa-label__optional">{F.optional}</span>
+              </label>
+              <input
+                id={fid('name')}
+                class="oa-input"
+                type="text"
+                autoComplete="name"
+                maxLength={LIMITS.name}
+                placeholder={F.namePlaceholder}
+                value={v.name}
+                onInput={set('name')}
+              />
+            </div>
+          </div>
+
           <Field id={fid('industry')} label={F.industryLabel} optional hint={F.industryHelp}>
             <select
               id={fid('industry')}
@@ -235,6 +286,16 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
                 <option value="">{F.teamSizePlaceholder}</option>
                 {TEAM_SIZE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value satisfies TeamSize}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id={fid('region')} label={F.regionLabel}>
+              <select id={fid('region')} class="oa-input oa-select" value={v.region} onChange={set('region')}>
+                <option value="">{F.regionNotSure}</option>
+                {REGION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
@@ -289,54 +350,6 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
             </div>
           </Expander>
 
-          <div class="oa-grid-2 oa-lead-row">
-            <div class="oa-field">
-              <label class="oa-label" for={fid('email')}>
-                {F.emailLabel}
-              </label>
-              <input
-                ref={emailRef}
-                id={fid('email')}
-                class={emailError ? 'oa-input has-error' : 'oa-input'}
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                spellcheck={false}
-                required
-                maxLength={LIMITS.email}
-                placeholder={F.emailPlaceholder}
-                value={v.email}
-                onInput={set('email')}
-                aria-invalid={emailError ? true : undefined}
-                aria-describedby={emailError ? `${emailErrId} ${leadNoticeId}` : leadNoticeId}
-              />
-              {emailError && (
-                <p class="oa-field-error" id={emailErrId}>
-                  {emailError}
-                </p>
-              )}
-            </div>
-            <div class="oa-field">
-              <label class="oa-label" for={fid('name')}>
-                {F.nameLabel} <span class="oa-label__optional">{F.optional}</span>
-              </label>
-              <input
-                id={fid('name')}
-                class="oa-input"
-                type="text"
-                autoComplete="name"
-                maxLength={LIMITS.name}
-                placeholder={F.namePlaceholder}
-                value={v.name}
-                onInput={set('name')}
-              />
-            </div>
-          </div>
-          <p class="oa-privacy oa-lead-notice" id={leadNoticeId}>
-            {F.leadNotice} <ExternalLink href={CTA.privacy.url}>{F.privacyLinkLabel}</ExternalLink>
-          </p>
-
           <label class="oa-optin">
             <input
               type="checkbox"
@@ -354,7 +367,9 @@ export const Form = ({ initial, error, errorCode, onSubmit }: Props) => {
             {F.submit}
           </button>
 
-          <p class="oa-privacy">{F.privacyNotice}</p>
+          <p class="oa-privacy" id={leadNoticeId}>
+            {F.leadNotice} {F.privacyNotice} <ExternalLink href={CTA.privacy.url}>{F.privacyLinkLabel}</ExternalLink>
+          </p>
         </form>
       </div>
     </section>

@@ -1,8 +1,9 @@
-import { CTA } from '../../shared/services.js';
+import { bookingUrl, CTA } from '../../shared/services.js';
+import { track } from '../api.js';
 import { COPY } from '../content/copy.js';
 import { ExternalLink } from './ui.js';
 
-/** Call to action, shown at the foot of both tabs. */
+/** Booking card: after "Fix these first" on the audit tab, at the end of the AI tab. */
 const CONTENT = {
   ai: { heading: COPY.cta.heading, text: COPY.cta.text },
   pitch: { heading: COPY.cta.pitchHeading, text: COPY.cta.text },
@@ -17,7 +18,7 @@ export const Cta = ({ variant }: { variant: keyof typeof CONTENT }) => (
       <p>{CONTENT[variant].text}</p>
     </div>
     <div class="oa-cta__buttons">
-      <ExternalLink class="oa-button oa-button--on-dark" href={CTA.consultation.url}>
+      <ExternalLink class="oa-button oa-button--on-dark" href={bookingUrl(variant)} onClick={() => track('cta_click', variant)}>
         {CTA.consultation.label}
       </ExternalLink>
       <ExternalLink class="oa-button oa-button--outline-dark" href={CTA.contact.url}>

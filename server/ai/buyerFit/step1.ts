@@ -92,7 +92,7 @@ export const STEP1_SCHEMA: JsonSchema = {
         required: ['name', 'description', 'redFlags', 'weight'],
         properties: {
           name: { type: 'string', description: "2 to 4 words, e.g. 'Portfolio Depth'" },
-          description: { type: 'string', description: 'What good looks like to a discerning buyer.' },
+          description: { type: 'string', description: 'What good looks like to a discerning customer.' },
           redFlags: { type: 'array', items: { type: 'string' }, description: '2 to 3 warning signs.' },
           weight: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
@@ -109,7 +109,7 @@ export const buildStep1Prompt = (input: Step1Input, boundary: Boundary): { syste
   const bt = btBlank ? 'business of the type shown in the homepage text' : 'business of the type given in VISITOR ANSWERS';
 
   const system = [
-    'You are a senior consultant specialising in evaluating and procuring professional services and suppliers. You have 20 years of experience advising buyers on how to assess and select the right partner.',
+    'You are a senior consultant specialising in evaluating and procuring professional services and suppliers. You have 20 years of experience advising customers on how to assess and select the right partner.',
     'Use UK English spelling.',
     'Answer only with the requested structured result.',
     dataRule(boundary),
@@ -121,20 +121,20 @@ export const buildStep1Prompt = (input: Step1Input, boundary: Boundary): { syste
       [
         `BUSINESS TYPE: ${visitorValue(given.businessType, boundary)}`,
         ...(input.industryLabel ? [`INDUSTRY: ${visitorValue(input.industryLabel, boundary)}`] : []),
-        'THE BUYER:',
+        'THE CUSTOMER:',
         `- Role: ${visitorValue(given.persona.role, boundary)}`,
         `- Business Size: ${visitorValue(given.persona.size, boundary)}`,
         `- Sector: ${visitorValue(given.persona.sector, boundary)}`,
         `- Buying Trigger: ${visitorValue(given.persona.trigger, boundary)}`,
       ].join('\n'),
     )}`,
-    `A potential buyer is evaluating a ${bt}. Define the optimal evaluation framework: the criteria that matter most when judging whether this type of business is credible, competent, and worth hiring.`,
+    `A potential customer is evaluating a ${bt}. Define the optimal evaluation framework: the criteria that matter most when judging whether this type of business is credible, competent, and worth hiring.`,
     [
       'INSTRUCTIONS:',
       `- Generate 4-6 evaluation criteria specifically tailored to assessing a ${bt}.`,
-      "- Each criterion must be relevant to what a buyer would look for on the business's website.",
-      `- Think about what separates an excellent ${bt} from a mediocre one, from the buyer's perspective.`,
-      '- Weight the criteria: what matters most for the buyer described in VISITOR ANSWERS?',
+      "- Each criterion must be relevant to what a customer would look for on the business's website.",
+      `- Think about what separates an excellent ${bt} from a mediocre one, from the customer's perspective.`,
+      '- Weight the criteria: what matters most for the customer described in VISITOR ANSWERS?',
       `- Be specific to the business type. Generic criteria like "good design" are not useful. Think about what uniquely matters for a ${bt}.`,
       '- Write every field in UK English.',
     ].join('\n'),
@@ -149,10 +149,10 @@ export const buildStep1Prompt = (input: Step1Input, boundary: Boundary): { syste
   }
   if (personaBlank) {
     parts.push(
-      'SOME BUYER DETAILS WERE NOT SPECIFIED.\nFill in each one marked (not specified) from the homepage text below: describe the buyer this website most evidently sets out to win. Be specific rather than generic (for example "Founder of a 10-50 person software company", not "business owner"). Keep the specified fields exactly as given, and build the criteria around the completed buyer.',
+      'SOME CUSTOMER DETAILS WERE NOT SPECIFIED.\nFill in each one marked (not specified) from the homepage text below, in the buyer object: describe the customer this website most evidently sets out to win. Be specific rather than generic (for example "Founder of a 10-50 person software company", not "business owner"). Keep the specified fields exactly as given, and build the criteria around the completed customer.',
     );
   } else {
-    parts.push('Copy every buyer field from VISITOR ANSWERS into buyer exactly as given.');
+    parts.push('Copy every customer field from VISITOR ANSWERS into the buyer object exactly as given.');
   }
   if (btBlank || personaBlank) {
     const home = input.pages[0];

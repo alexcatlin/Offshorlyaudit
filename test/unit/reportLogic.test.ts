@@ -47,12 +47,12 @@ describe('buyerFitScore', () => {
 
 describe('score bands and colours', () => {
   it('bands at 80/60/40', () => {
-    expect(scoreBand(80)?.text).toBe('A strong fit for this buyer');
-    expect(scoreBand(79)?.text).toBe('Credible, with gaps this buyer will notice');
+    expect(scoreBand(80)?.text).toBe('A strong fit for this customer');
+    expect(scoreBand(79)?.text).toBe('Credible, with gaps this customer will notice');
     expect(scoreBand(60)?.id).toBe('credible');
-    expect(scoreBand(59)?.text).toBe('Losing this buyer to clearer competitors');
+    expect(scoreBand(59)?.text).toBe('Losing this customer to clearer competitors');
     expect(scoreBand(40)?.id).toBe('losing');
-    expect(scoreBand(39)?.text).toBe('Not making the case to this buyer');
+    expect(scoreBand(39)?.text).toBe('Not making the case to this customer');
     expect(scoreBand(null)).toBeNull();
   });
 

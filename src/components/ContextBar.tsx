@@ -1,8 +1,8 @@
 import type { AuditReport } from '../../shared/types.js';
 import { COPY } from '../content/copy.js';
 import { formatDate, hasBuyerFit } from '../lib/report.js';
-import { Spinner } from './ui.js';
 
+/** While customer fit is pending the score card carries the "still reading" line, so this bar stays quiet. */
 export const ContextBar = ({ report }: { report: AuditReport }) => {
   const bf = hasBuyerFit(report) ? report.buyerFit : undefined;
   const p = bf?.persona;
@@ -17,12 +17,6 @@ export const ContextBar = ({ report }: { report: AuditReport }) => {
           </span>
         )}
       </p>
-      {report.buyerFitStatus === 'pending' && (
-        <p class="oa-context__pending">
-          <Spinner small />
-          {COPY.report.pending}
-        </p>
-      )}
       {p && (
         <>
           <p class="oa-context__line">

@@ -26,10 +26,10 @@ export interface ScoreBand {
 /** Visitor-facing band for a 0–100 buyer-fit score; null when the score is null. */
 export const scoreBand = (score: number | null): ScoreBand | null => {
   if (score === null || !Number.isFinite(score)) return null;
-  if (score >= 80) return { id: 'strong', text: 'A strong fit for this buyer' };
-  if (score >= 60) return { id: 'credible', text: 'Credible, with gaps this buyer will notice' };
-  if (score >= 40) return { id: 'losing', text: 'Losing this buyer to clearer competitors' };
-  return { id: 'not-making-case', text: 'Not making the case to this buyer' };
+  if (score >= 80) return { id: 'strong', text: 'A strong fit for this customer' };
+  if (score >= 60) return { id: 'credible', text: 'Credible, with gaps this customer will notice' };
+  if (score >= 40) return { id: 'losing', text: 'Losing this customer to clearer competitors' };
+  return { id: 'not-making-case', text: 'Not making the case to this customer' };
 };
 
 export type ScoreColour = 'good' | 'mid' | 'warning' | 'none';

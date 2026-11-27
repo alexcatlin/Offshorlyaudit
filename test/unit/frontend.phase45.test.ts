@@ -9,7 +9,7 @@ import { AiOpportunities, IndustryExamples, sourceLabel } from '../../src/compon
 import { FeedbackButtons } from '../../src/components/FeedbackButtons.js';
 import { Report } from '../../src/components/Report.js';
 import { emailErrorText, ReportActions } from '../../src/components/ReportActions.js';
-import { privacyText, WhatWeRead } from '../../src/components/WhatWeRead.js';
+import { footerItems, WhatWeRead } from '../../src/components/WhatWeRead.js';
 import { COPY } from '../../src/content/copy.js';
 import { toAuditError } from '../../src/lib/errors.js';
 import { dataMessage, parseDataMessage } from '../../src/lib/printBridge.js';
@@ -107,11 +107,12 @@ describe('Phase 4: email action', () => {
   it('footer: the Resend sentence only when email is on', () => {
     const sentence = 'If you ask us to email the report, we send it to the address you entered through our email provider, Resend.';
     expect(COPY.footer.privacyEmail).toBe(sentence);
-    expect(privacyText({ share: true, shareRetentionDays: 30, email: true })).toContain(sentence);
-    expect(privacyText({ share: true, shareRetentionDays: 30, email: false })).not.toContain('Resend');
-    expect(privacyText({ share: true, shareRetentionDays: 30 })).not.toContain('Resend');
-    expect(privacyText({ share: false, shareRetentionDays: 30, email: true })).not.toContain('Resend');
-    expect(privacyText(null)).not.toContain('Resend');
+    const text = (f: Parameters<typeof footerItems>[0]) => footerItems(f).map(([, t]) => t).join(' ');
+    expect(text({ share: true, shareRetentionDays: 30, email: true })).toContain(sentence);
+    expect(text({ share: true, shareRetentionDays: 30, email: false })).not.toContain('Resend');
+    expect(text({ share: true, shareRetentionDays: 30 })).not.toContain('Resend');
+    expect(text({ share: false, shareRetentionDays: 30, email: true })).not.toContain('Resend');
+    expect(text(null)).not.toContain('Resend');
   });
 
   it('the print window keeps the email flag for the footer', () => {
@@ -160,7 +161,7 @@ describe('Phase 5: industry examples', () => {
     expect(out).not.toContain('What others in');
   });
 
-  it('"What we read" mentions the web search only when research was used', () => {
+  it('"Pages we analysed" mentions the web search only when research was used', () => {
     const line = COPY.whatWeRead.searched('legal');
     expect(line).toBe('We also searched the web for examples from legal. Nothing about you or your site was sent.');
     expect(renderToString(h(WhatWeRead, { report: report() }))).toContain(line);
@@ -203,5 +204,29 @@ describe('votes kept across in-place print', () => {
     expect(live).toMatch(/aria-pressed="true"[^>]*>Useful/);
     const print = renderToString(h(Report, { report: report(), request, mode: 'print', onVote: async () => 'ok' as const, votes: { 0: 'up' } }));
     expect(print).not.toContain('oa-feedback');
+  });
+});
+
+describe('booking card on the audit tab (fable review §8)', () => {
+  const live = () => renderToString(h(Report, { report: report(), request }));
+
+  it('appears once, after "Fix these first" and before the detail groups, as "Want help with these fixes?"', () => {
+    const html = live();
+    const fix = html.indexOf(COPY.fixFirst.heading);
+    const cta = html.indexOf('utm_content=website');
+    const detail = html.indexOf(`>${COPY.detail.technicalHeading}</h3>`);
+    expect(fix).toBeGreaterThan(-1);
+    expect(cta).toBeGreaterThan(fix);
+    expect(cta).toBeLessThan(detail);
+    expect(html.match(/utm_content=website/g)).toHaveLength(1);
+    expect(html).toContain(`<h3 class="oa-cta__heading">${COPY.cta.websiteHeading}</h3>`);
+    expect(COPY.cta.websiteHeading).toBe('Want help with these fixes?');
+  });
+
+  it('is still in the print layout, and the AI section there has one booking card (no top strip)', () => {
+    const html = renderToString(h(Report, { report: report(), request, mode: 'print' }));
+    expect(html.match(/utm_content=website/g)).toHaveLength(1);
+    expect(html.match(/utm_content=ai(&|")/g)).toHaveLength(1);
+    expect(html).not.toContain('utm_content=ai-top');
   });
 });

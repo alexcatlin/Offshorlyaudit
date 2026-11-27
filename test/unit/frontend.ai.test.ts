@@ -3,6 +3,7 @@ import { h } from 'preact';
 import { renderToString } from 'preact-render-to-string';
 import { describe, expect, it } from 'vitest';
 import { OTHER_INDUSTRY_FALLBACK_LABEL } from '../../shared/industries.js';
+import { CTA } from '../../shared/services.js';
 import type { AiOpportunity, AiSection, AuditReport } from '../../shared/types.js';
 import { AiOpportunities, industryBadge } from '../../src/components/AiOpportunities.js';
 import { Form } from '../../src/components/Form.js';
@@ -143,7 +144,7 @@ describe('Form order (Amendment 4)', () => {
     return i;
   };
 
-  it('URL, industry select, both expanders, then email, then the submit button, then the privacy line', () => {
+  it('URL, email, industry select, both expanders, then the submit button, then the merged notice', () => {
     const url = at(COPY.form.urlLabel);
     const industry = at(COPY.form.industryLabel);
     const business = at(COPY.form.businessToggle);
@@ -151,12 +152,28 @@ describe('Form order (Amendment 4)', () => {
     const email = at(COPY.form.emailLabel);
     const submit = at('type="submit"');
     const privacy = at(COPY.form.privacyNotice.slice(0, 40));
-    expect(url).toBeLessThan(industry);
+    expect(url).toBeLessThan(email);
+    expect(email).toBeLessThan(industry);
     expect(industry).toBeLessThan(business);
     expect(business).toBeLessThan(buyer);
-    expect(buyer).toBeLessThan(email);
-    expect(email).toBeLessThan(submit);
+    expect(buyer).toBeLessThan(submit);
     expect(submit).toBeLessThan(privacy);
+  });
+
+  it('one notice under the button carries every CRM, Anthropic and privacy-policy statement', () => {
+    const notice = html.slice(html.indexOf('type="submit"'));
+    for (const s of [COPY.form.leadNotice, COPY.form.privacyNotice]) expect(notice).toContain(s);
+    expect(notice).toContain(CTA.privacy.url);
+    expect(notice).toContain('One free audit per email.');
+    expect(notice).toContain('Your email is never sent to Anthropic.');
+    expect(html.match(/class="oa-privacy"/g)).toHaveLength(1);
+  });
+
+  it('the pitch is one h1, a short intro and a real list of what you get', () => {
+    expect(html.match(/<h1/g)).toHaveLength(1);
+    expect(html).toContain(`<ul class="oa-hero__gets" aria-label="${COPY.hero.getsLabel}">`);
+    expect(html.match(/<li>/g)).toHaveLength(COPY.hero.gets.length);
+    expect(COPY.hero.sub.match(/under 30 seconds/g)).toHaveLength(1);
   });
 
   it('industry select defaults to "not sure" and lists every industry', () => {
@@ -172,9 +189,9 @@ describe('Form order (Amendment 4)', () => {
     expect(toggles).toEqual(['true', 'false']);
   });
 
-  it('lead notice mentions the answers going to the CRM; buyer labels say whose sector it is', () => {
+  it('lead notice mentions the answers going to the CRM; customer labels say whose industry it is', () => {
     expect(COPY.form.leadNotice).toContain('your answers');
-    expect(COPY.form.sectorLabel).toMatch(/Buyer/);
+    expect(COPY.form.sectorLabel).toBe('Their industry (not yours)');
     expect(EXAMPLE_BUYER).not.toHaveProperty('businessType');
   });
 });
@@ -187,5 +204,37 @@ describe('buildRequest (Amendment 4)', () => {
     expect(blank).not.toHaveProperty('tools');
     expect(buildRequest({ ...EMPTY_FORM, industry: 'nope' as never }, 'https://a.com/')).not.toHaveProperty('industry');
     expect(buildRequest({ ...EMPTY_FORM, tools: 'x'.repeat(400) }, 'https://a.com/').tools).toHaveLength(150);
+  });
+});
+
+describe('booking cards on the AI tab (spec 002)', () => {
+  const links = (html: string) =>
+    [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]!.replace(/&amp;/g, '&')).filter((u) => u.startsWith(`${CTA.consultation.url}?`));
+  const placement = (url: string) => new URL(url).searchParams.get('utm_content');
+
+  it('with ideas: only the full card at the end (ai), no strip or link above the ideas', () => {
+    const html = render(section([siteIdea, industryIdea]));
+    expect(links(html).map(placement)).toEqual(['ai']);
+    expect(html).not.toMatch(/oa-cta-strip|ideas below/);
+    expect(html.match(/class="oa-cta"/g)).toHaveLength(1);
+    expect(html.lastIndexOf('class="oa-cta"')).toBeGreaterThan(html.indexOf('Triage incoming enquiries'));
+  });
+
+  it('with one idea: the same single end card', () => {
+    expect(links(render(section([siteIdea]))).map(placement)).toEqual(['ai']);
+  });
+
+  it('with no ideas: one card only (the pitch), no strip', () => {
+    const html = render(section([]));
+    expect(links(html).map(placement)).toEqual(['pitch']);
+    expect(html.match(/class="oa-cta"/g)).toHaveLength(1);
+    expect(html).not.toContain('oa-cta-strip');
+  });
+
+  it('while the AI is pending: one card only, no strip', () => {
+    const html = renderToString(h(AiOpportunities, { report: { ...report(section([siteIdea])), aiStatus: 'pending', ai: undefined }, request: { url: 'x' } }));
+    expect(links(html).map(placement)).toEqual(['ai']);
+    expect(html.match(/class="oa-cta"/g)).toHaveLength(1);
+    expect(html).not.toContain('oa-cta-strip');
   });
 });

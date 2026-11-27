@@ -275,7 +275,7 @@ button {
 }
 
 .oa-input::placeholder {
-  color: #8a8a94;
+  color: #6e6e78; /* 4.7:1 on the input fill (was #8a8a94, 3.2:1) */
 }
 
 .oa-input:focus {
@@ -554,6 +554,7 @@ button {
   font-size: clamp(30px, 4vw + 16px, 52px);
   line-height: 1.1;
   margin-bottom: 14px;
+  text-wrap: balance;
 }
 
 .oa-hero__sub {
@@ -561,8 +562,32 @@ button {
   font-size: 17px;
   line-height: 1.5;
   font-weight: 300;
-  margin-bottom: 28px;
+  margin-bottom: 18px;
   max-width: 620px;
+}
+
+.oa-hero__gets {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.oa-hero__gets li {
+  display: flex;
+  gap: 10px;
+  text-wrap: balance;
+}
+
+.oa-hero__gets li::before {
+  content: '✓';
+  content: '✓' / '';
+  flex: none;
+  color: var(--oa-mint);
+  font-weight: 700;
 }
 
 .oa-form {
@@ -641,10 +666,6 @@ button {
   gap: 16px;
 }
 
-.oa-lead-notice {
-  margin-top: -6px;
-}
-
 .oa-optin {
   display: flex;
   align-items: flex-start;
@@ -665,8 +686,8 @@ button {
 
 .oa-form__submit {
   width: 100%;
-  font-size: 17px;
-  padding: 14px 22px;
+  font-size: 18px;
+  padding: 16px 24px;
 }
 
 .oa-expander {
@@ -714,11 +735,8 @@ button {
 }
 
 .oa-expander__optional {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.36px;
+  font-size: 13px;
   color: var(--oa-muted-strong);
-  font-family: var(--oa-font-heading);
 }
 
 .oa-expander__body {
@@ -756,10 +774,6 @@ button {
   .oa-form {
     padding: 28px;
   }
-  .oa-form__submit {
-    width: auto;
-    align-self: flex-start;
-  }
   .oa-alert__actions {
     flex-direction: row;
     align-items: center;
@@ -767,6 +781,13 @@ button {
   }
   .oa-grid-2 {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 700px) {
+  .oa-hero__gets {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
   }
 }
 
@@ -817,7 +838,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #9a9aa3;
+  color: #6e6e78; /* 5.0:1 on white (was #9a9aa3, 2.8:1) */
   font-size: 15px;
 }
 
@@ -911,14 +932,6 @@ button {
   font-size: 14px;
 }
 
-.oa-context__pending {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--oa-muted-strong);
-  font-size: 14px;
-}
-
 .oa-context__note {
   color: var(--oa-muted-strong);
   font-size: 14px;
@@ -926,42 +939,112 @@ button {
 
 /* Tabs */
 
+/* Segmented control: one light track; the selected tab is white with the gradient bar, the other
+   a purple link with an arrow. No sticky positioning (the widget lives in an auto-resizing iframe). */
 .oa-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 4px;
-  border-bottom: 1px solid var(--oa-card-border);
   margin-top: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  padding: 4px;
+  border-radius: 12px;
+  background: #efeff6; /* light lavender-grey track */
 }
 
 .oa-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 56px;
+  background: transparent;
   border: 0;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -1px;
-  padding: 12px 14px;
+  border-radius: 9px;
+  padding: 10px 32px 12px 12px;
   font-family: var(--oa-font-heading);
-  font-weight: 500;
-  font-size: 16px;
-  color: var(--oa-muted-strong);
+  text-align: left;
+  color: var(--oa-purple-text);
   cursor: pointer;
-  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color 0.2s ease;
 }
 
 .oa-tab:hover {
-  color: var(--oa-dark);
+  background: var(--oa-tint);
+}
+
+.oa-tab__label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.oa-tab__hint {
+  font-family: var(--oa-font-body);
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--oa-muted-strong);
+}
+
+.oa-tab__arrow {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
 }
 
 .oa-tab.is-selected {
+  background: var(--oa-white);
   color: var(--oa-dark);
-  font-weight: 600;
-  border-image: var(--oa-gradient) 1;
-  border-bottom-style: solid;
-  border-bottom-width: 3px;
+  box-shadow: 0 2px 8px rgba(28, 28, 34, 0.1);
+  padding-right: 12px;
+}
+
+.oa-tab.is-selected::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--oa-gradient);
+}
+
+/* Fills and the gradient bar vanish in forced colours: keep the selected tab distinct. */
+@media (forced-colors: active) {
+  .oa-tab.is-selected {
+    outline: 3px solid CanvasText;
+  }
+}
+
+@media (min-width: 600px) {
+  .oa-tab {
+    padding: 14px 40px 16px 20px;
+  }
+
+  .oa-tab.is-selected {
+    padding-right: 20px;
+  }
+
+  .oa-tab__arrow {
+    right: 18px;
+  }
+
+  .oa-tab__label {
+    font-size: 20px;
+  }
+
+  .oa-tab__hint {
+    font-size: 14px;
+  }
 }
 
 .oa-tab__status {
@@ -1084,7 +1167,7 @@ button {
 }
 
 .oa-verdict__label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.54px;
@@ -1140,7 +1223,7 @@ button {
 }
 
 .oa-tile__title {
-  font-size: 20px;
+  font-size: 18px;
   margin-bottom: 4px;
 }
 
@@ -1334,9 +1417,10 @@ button {
 
 /* Detail sections */
 
-.oa-detail-heading {
+.oa-detail-heading,
+.oa-ai__heading {
   font-size: 22px;
-  margin-top: 12px;
+  margin: 24px 0 -6px;
 }
 
 .oa-details {
@@ -1383,7 +1467,7 @@ button {
 
 .oa-collapsible__title {
   font-family: var(--oa-font-heading);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 18px;
   color: var(--oa-dark);
 }
@@ -1448,11 +1532,6 @@ button {
   color: var(--oa-text);
   padding-top: 14px;
   border-top: 1px solid var(--oa-card-border);
-}
-
-.oa-subheading {
-  font-size: 17px;
-  margin-top: 4px;
 }
 
 /* Criteria */
@@ -1597,12 +1676,77 @@ button {
   border-left-color: var(--oa-error);
 }
 
+/* Label left, "See it on" right, as on the AI tab's quote cards; wraps on narrow cards. */
+.oa-quote__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
 .oa-quote__label {
   font-family: var(--oa-font-heading);
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.36px;
+  color: var(--oa-muted-strong);
+}
+
+.oa-quote__link {
+  margin-left: auto; /* stays right when a neutral quote has no label */
+}
+
+/* One style for every "See it on" link and third-party source link: quiet, with a decorative arrow. */
+.oa-quote__link,
+.oa-basis__link,
+.oa-source-link {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.oa-quote__link::after,
+.oa-basis__link::after,
+.oa-source-link::after {
+  content: '↗';
+  content: '↗' / '';
+  display: inline-block;
+  margin-left: 4px;
+  transition: transform 0.15s;
+}
+
+.oa-quote__link:hover::after,
+.oa-basis__link:hover::after,
+.oa-source-link:hover::after,
+.oa-quote__link:focus-visible::after,
+.oa-basis__link:focus-visible::after,
+.oa-source-link:focus-visible::after {
+  transform: translate(1px, -1px);
+}
+
+/* The two page links are small chips. */
+.oa-quote__link,
+.oa-basis__link {
+  position: relative;
+  padding: 2px 10px;
+  background: var(--oa-white);
+  border: 1px solid var(--oa-card-border);
+  border-radius: var(--oa-radius-input);
+  text-decoration: none;
+}
+
+.oa-quote__link:hover,
+.oa-basis__link:hover,
+.oa-quote__link:focus-visible,
+.oa-basis__link:focus-visible {
+  border-color: var(--oa-purple);
+}
+
+/* A lone card spans the full width of the two-column grid. */
+.oa-criterion__quotes > .oa-quote:only-child {
+  grid-column: 1 / -1;
 }
 
 .oa-quote--for .oa-quote__label {
@@ -1625,10 +1769,6 @@ button {
   color: var(--oa-text);
 }
 
-.oa-quote__source {
-  font-size: 13px;
-}
-
 /* Mismatch + actions */
 
 .oa-mismatch {
@@ -1648,27 +1788,24 @@ button {
   color: var(--oa-dark);
 }
 
-.oa-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.oa-action {
-  background: var(--oa-tint);
-  border: 1px solid var(--oa-card-border);
-  border-radius: 12px;
-  padding: 12px 14px;
-}
-
-.oa-action__text {
-  font-size: 15px;
-  color: var(--oa-dark);
-}
-
-.oa-collapsible__body > .oa-subheading:first-child {
+/* Action plan: "Do first (n)" / "Do later (n)" eyebrows over numbered "Fix these first" rows. */
+.oa-plan__group {
+  margin: 0;
   padding-top: 14px;
   border-top: 1px solid var(--oa-card-border);
+}
+
+.oa-plan__meta {
+  font-size: 14px;
+  color: var(--oa-muted-strong);
+  margin-top: 2px;
+}
+
+@media (max-width: 479px) {
+  .oa-plan .oa-fixfirst__item {
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 
 /* Check list */
@@ -1892,7 +2029,7 @@ button {
   color: var(--oa-muted-strong);
 }
 
-/* What we read */
+/* Pages we analysed */
 
 .oa-pages {
   display: flex;
@@ -1928,16 +2065,108 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--oa-muted-strong);
   border-top: 1px solid var(--oa-card-border);
   padding-top: 16px;
   margin-top: 8px;
 }
 
+.oa-report-foot__heading {
+  font-size: 18px;
+}
+
+/* "How we handle your data": a bounded tint panel; the summary is its header row with a +/− icon. */
+.oa-report-foot__more {
+  margin-top: 6px;
+  background: var(--oa-tint);
+  border: 1px solid var(--oa-card-border);
+  border-radius: 12px;
+}
+
+.oa-report-foot__more > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 12px;
+  font-family: var(--oa-font-heading);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--oa-dark);
+}
+
+.oa-report-foot__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Same round +/− icon as the form's expanders. */
+.oa-report-foot__more > summary::before {
+  content: '+';
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--oa-purple);
+  color: var(--oa-purple-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.oa-report-foot__more[open] > summary::before {
+  content: '−';
+}
+
+.oa-report-foot__more > summary:hover {
+  color: var(--oa-purple-text);
+}
+
+.oa-report-foot__more > summary:focus-visible {
+  outline: 2px solid var(--oa-purple);
+  outline-offset: 2px;
+}
+
+.oa-report-foot__list {
+  margin: 0;
+  padding: 0 16px 4px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.oa-report-foot__list > div {
+  display: grid;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid var(--oa-card-border);
+}
+
+.oa-report-foot__list dt {
+  font-family: var(--oa-font-heading);
+  font-weight: 600;
+  color: var(--oa-dark);
+}
+
+.oa-report-foot__list dd {
+  margin: 0;
+  color: var(--oa-text);
+}
+
+@media (min-width: 600px) {
+  .oa-report-foot__list > div {
+    grid-template-columns: 160px 1fr;
+    gap: 16px;
+  }
+}
+
 .oa-restart {
   display: flex;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .oa-render-error {
@@ -1964,11 +2193,6 @@ button {
   border: 1px dashed var(--oa-outline-border);
   border-radius: 12px;
   padding: 12px 14px;
-}
-
-.oa-ai__heading {
-  font-size: 22px;
-  margin-top: 4px;
 }
 
 .oa-business__summary {
@@ -2014,8 +2238,13 @@ button {
 }
 
 .oa-opp__title {
-  font-size: 21px;
+  font-size: 18px;
   flex: 1 1 200px;
+}
+
+/* "Rated likely fit: …" above the evidence in "Why we think so". */
+.oa-confidence-note {
+  margin-bottom: 8px;
 }
 
 /* Amendment 4: site ideas and industry ideas in two groups. */
@@ -2023,11 +2252,21 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-top: 24px;
+}
+
+.oa-ai__heading + .oa-opp-group {
+  margin-top: 0;
 }
 
 .oa-opp-group__heading {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 22px;
+}
+
+.oa-opp-group--site .oa-opp-group__heading,
+.oa-opp-group--industry .oa-opp-group__heading {
+  font-size: 18px;
+  color: var(--oa-purple-text);
 }
 
 .oa-opp-group__intro {
@@ -2108,6 +2347,15 @@ button {
   min-width: 0;
 }
 
+/* Label left, "See it on" link right; the link drops under the label on narrow cards. */
+.oa-basis__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
 .oa-basis__kind {
   font-size: 12px;
   font-family: var(--oa-font-heading);
@@ -2125,10 +2373,6 @@ button {
 
 .oa-basis__text {
   color: var(--oa-dark);
-}
-
-.oa-basis__link {
-  font-size: 13px;
 }
 
 .oa-proof {
@@ -2213,6 +2457,9 @@ button {
 }
 
 .oa-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 12px;
 }
 
@@ -2281,32 +2528,44 @@ button {
 /* Phase 5: "What others in {industry} are doing" (third-party web-search examples). */
 .oa-examples__list {
   list-style: none;
-  margin: 0;
+  margin: 4px 0 0;
   padding: 0;
   display: grid;
   gap: 12px;
 }
 
+.oa-examples .oa-opp-group__intro {
+  font-size: 13px;
+}
+
 .oa-example {
   border: 1px solid var(--oa-card-border);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-left: 3px solid var(--oa-purple);
+  border-radius: 10px;
+  padding: 14px 16px;
   background: var(--oa-white);
 }
 
 .oa-example__text {
-  margin: 0 0 6px;
+  margin: 0 0 10px;
+  color: var(--oa-dark);
 }
 
 .oa-example__sources {
   margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--oa-card-border);
   font-size: 13px;
   color: var(--oa-muted-strong);
   overflow-wrap: anywhere;
 }
 
 .oa-example__label {
-  font-weight: 600;
+  font-family: var(--oa-font-heading);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.36px;
 }
 
 .oa-searched {
@@ -2390,6 +2649,31 @@ button {
   padding: 24px 0;
 }
 
+/* ---------- Touch screens: 44px tap targets ---------- */
+
+@media (pointer: coarse) {
+  .oa-button,
+  .oa-link-button,
+  .oa-feedback__button {
+    min-height: 44px;
+  }
+
+  .oa-page-chip__url,
+  .oa-helplink a,
+  .oa-opp__service a,
+  .oa-proof__link {
+    display: inline-block;
+    padding-block: 12px;
+  }
+
+  .oa-quote__link::before,
+  .oa-basis__link::before {
+    content: '';
+    position: absolute;
+    inset: -9px -4px;
+  }
+}
+
 /* ---------- Print / Save as PDF ---------- */
 
 @media print {
@@ -2450,6 +2734,11 @@ button {
     pointer-events: none;
   }
 
+  /* The data panel prints open; its +/− icon means nothing on paper. */
+  .oa-report-foot__more > summary::before {
+    display: none;
+  }
+
   /* Links print their address after the text (service, CTA, proof and source links). */
   .oa-opp__service a[href^='http']::after,
   .oa-proof__link[href^='http']::after,
@@ -2460,6 +2749,17 @@ button {
     content: ' (' attr(href) ')';
     font-size: 0.85em;
     word-break: break-all;
+  }
+
+  .oa-quote__link,
+  .oa-basis__link {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .oa-quote__link::after {
+    content: none;
   }
 
   a {

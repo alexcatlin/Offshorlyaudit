@@ -20,6 +20,7 @@ import { EMAIL_INVALID_MESSAGE, emailKey, isAllowlisted, logHash, validEmail, va
 import type { Allowlist, EmailChecker } from '../lead/email.js';
 import { ledgerAllows } from '../lead/ledger.js';
 import type { AuditLedger } from '../lead/ledger.js';
+import type { MetricsStore } from '../metrics/store.js';
 import { SiteReadError } from '../site/errors.js';
 import { normaliseInputUrl } from '../site/readSite.js';
 
@@ -57,6 +58,8 @@ export interface AuditRouteDeps {
   lead: LeadDeps;
   /** Per-response sessions (Amendment 5): every 200 gets its own token. */
   sessions: SessionStore;
+  /** Daily counters (spec 001); absent = nothing counted. */
+  metrics?: MetricsStore;
   /** What the report may offer (share, email, feedback). */
   features: Features;
   /** Test seam: defaults to runAudit. */
@@ -92,6 +95,34 @@ export const validateStartBody = (body: unknown): StartBody => {
 };
 
 /**
+ * Spec 001: what the AI did on a fresh run, counted as totals when its promises settle. Adds no
+ * wait to the response (both promises never reject). Runs only for non-staff, non-cache-hit audits.
+ */
+const countAiOutcome = (metrics: MetricsStore, entry: AuditEntry): void => {
+  if (!entry.ai) return;
+  metrics.inc('ai_attempted');
+  void entry.ai.then((r) => {
+    if (r.aiStatus !== 'unavailable') metrics.inc('ai_finished');
+    const ai = r.ai;
+    if (ai?.industry) {
+      metrics.inc('industry_known');
+      const cites = (ai.industryExamples?.length ?? 0) > 0 || ai.opportunities.some((o) => o.basis.some((b) => b.kind === 'source'));
+      if (cites) metrics.inc('industry_with_examples');
+    }
+  });
+  void entry.aiCost?.then((s) => metrics.addCost(s.cost_usd));
+};
+
+const countAudit = (metrics: MetricsStore, entry: AuditEntry, hit: boolean, log: { error: (o: object, msg: string) => void }): void => {
+  try {
+    metrics.inc('audit_run');
+    if (!hit) countAiOutcome(metrics, entry);
+  } catch (e) {
+    log.error({ error: (e as Error).name }, 'metrics failed');
+  }
+};
+
+/**
  * The allowance is used only by a 200 where AI ran or legitimately didn't apply: the initial
  * report doesn't have both statuses 'unavailable' (AI off, daily cap, no slots). 'thin' counts.
  */
@@ -114,6 +145,7 @@ export const cacheKey = (req: AuditRequest, url: URL): string => {
     req.timeSink ?? '',
     req.industry ?? '',
     req.tools ?? '',
+    req.region ?? '',
   ]);
   const hash = createHash('sha256').update(answers).digest('hex').slice(0, 16);
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '') || '/'}${url.search}#${hash}`;
@@ -272,6 +304,8 @@ export const registerAuditRoutes = (app: FastifyInstance, deps: AuditRouteDeps):
       else if (uncacheable) {
         for (const k of keys) if (deps.byKey.peek(k) === entry) deps.byKey.delete(k);
       } else forgetOnAiFailure(deps.byKey, entry, keys);
+
+      if (deps.metrics && !allowlisted) countAudit(deps.metrics, entry, hit, req.log);
 
       if (gated && usesAllowance(entry.report)) {
         try {

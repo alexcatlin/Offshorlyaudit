@@ -4,6 +4,7 @@ import type { AiOpportunity, AiSection, AuditReport, AuditRequest, Basis, Exampl
 import {
   AI_LOADING_STAGES,
   CONFIDENCE_LABELS,
+  CONFIDENCE_MEANINGS,
   COPY,
   CUSTOMERS_LABELS,
   EFFICIENCY_LABELS,
@@ -29,11 +30,13 @@ const BasisItem = ({ b, request }: { b: Basis; request: AuditRequest }) => {
   if (b.kind === 'quote') {
     return (
       <li class="oa-basis oa-basis--quote">
-        <span class="oa-basis__kind">{A.basisQuote}</span>
+        <div class="oa-basis__head">
+          <span class="oa-basis__kind">{A.basisQuote}</span>
+          <ExternalLink class="oa-basis__link" href={b.pageUrl}>
+            {COPY.buyerFit.viewPage(b.pageLabel)}
+          </ExternalLink>
+        </div>
         <blockquote class="oa-basis__quote">“{b.quote}”</blockquote>
-        <ExternalLink class="oa-basis__link" href={b.pageUrl}>
-          {COPY.buyerFit.viewPage(b.pageLabel)}
-        </ExternalLink>
       </li>
     );
   }
@@ -117,6 +120,7 @@ const Opportunity = ({
       <div class="oa-opp__row">
         <dt>{A.whyWeThinkSo}</dt>
         <dd>
+          <p class="oa-muted oa-small oa-confidence-note">{CONFIDENCE_MEANINGS[o.confidence]}</p>
           <ul class="oa-basis-list">
             {o.basis.map((b, i) => (
               <BasisItem key={i} b={b} request={request} />

@@ -151,7 +151,7 @@ const buyerFit = (req: AuditRequest, domain: string): BuyerFit => {
       score: 4,
       weight: 'high',
       reasoning:
-        '[Sample] The site mentions "clients across logistics" but shows no named project, outcome or before-and-after. A buyer has to take the claim on trust.',
+        '[Sample] The site mentions "clients across logistics" but shows no named project, outcome or before-and-after. A customer has to take the claim on trust.',
       evidence: [
         { quote: 'We have helped clients across logistics and retail', pageUrl: page, pageLabel: 'Homepage', effect: 'against', note: 'Claims sector experience but names no client.' },
       ],
@@ -176,7 +176,7 @@ const buyerFit = (req: AuditRequest, domain: string): BuyerFit => {
       name: '[Sample] Pricing signals',
       score: 3,
       weight: 'medium',
-      reasoning: '[Sample] There is no indication of budget range or engagement model, so the buyer cannot tell if this fits before calling.',
+      reasoning: '[Sample] There is no indication of budget range or engagement model, so the customer cannot tell if this fits before calling.',
     },
     {
       name: '[Sample] Ease of contact',
@@ -195,7 +195,7 @@ const buyerFit = (req: AuditRequest, domain: string): BuyerFit => {
     personaInferred: inferred,
     score: 58,
     verdict: {
-      summary: '[Sample] A capable-sounding agency that asks the buyer to trust claims it never backs up.',
+      summary: '[Sample] A capable-sounding agency that asks the customer to trust claims it never backs up.',
       brutalTruth: '[Sample] Without one named client result, an operations director will shortlist a competitor who shows theirs.',
     },
     strengths: [
@@ -210,7 +210,7 @@ const buyerFit = (req: AuditRequest, domain: string): BuyerFit => {
     ],
     actions: [
       { text: '[Sample] Add one named logistics case study with the problem, what you built and the result', horizon: 'now', impact: 'high', effort: 'medium', owner: 'marketing' },
-      { text: '[Sample] Replace the technology list with three outcomes buyers care about', horizon: 'now', impact: 'medium', effort: 'low', owner: 'marketing' },
+      { text: '[Sample] Replace the technology list with three outcomes customers care about', horizon: 'now', impact: 'medium', effort: 'low', owner: 'marketing' },
       { text: '[Sample] Say who runs projects day to day, with a photo and a line on their background', horizon: 'now', impact: 'medium', effort: 'low', owner: 'leadership' },
       { text: '[Sample] Publish a typical engagement model and budget range', horizon: 'later', impact: 'high', effort: 'medium', owner: 'leadership' },
       { text: '[Sample] Build a logistics landing page with sector-specific proof', horizon: 'later', impact: 'medium', effort: 'high', owner: 'developer' },
@@ -232,7 +232,6 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
       process: '[Sample] Enquiries arrive through the contact form and are read, sorted and answered by hand before anyone qualifies them.',
       basis: [
         { kind: 'quote', quote: 'Tell us about your project and we will reply within one working day', pageUrl: `https://${domain}/contact/`, pageLabel: 'Contact' },
-        { kind: 'stack', techId: 'cf7', name: 'Contact Form 7' },
       ],
       aiApproach: '[Sample] An assistant reads each enquiry, pulls out budget, timeline and project type, drafts a reply and flags the ones worth a founder call.',
       efficiency: 'turnaround',
@@ -265,7 +264,7 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
         { kind: 'stack', techId: 'workable', name: 'Workable' },
         ...(req.teamSize ? [{ kind: 'answer', field: 'teamSize' } as const] : []),
       ],
-      aiApproach: '[Sample] Score each CV against the role brief and summarise the strongest matches, with a person making every decision.',
+      aiApproach: '[Sample] An assistant scores each CV against the role brief and summarises the strongest matches, with a person making every decision.',
       efficiency: 'capacity',
       measureFirst: '[Sample] Applications per role and hours spent shortlisting.',
       confidence: 'worth-checking',
@@ -283,7 +282,7 @@ const aiSection = (req: AuditRequest, domain: string): AiSection => ({
           text: INDUSTRIES.agencies.patterns.find((p) => p.id === 'agencies.client-reporting')?.text ?? '',
         },
       ],
-      aiApproach: '[Sample] Pull the data together automatically and draft the commentary, so the account lead reviews rather than builds.',
+      aiApproach: '[Sample] An assistant pulls the data together and drafts the commentary, so the account lead reviews rather than builds.',
       efficiency: 'time-per-task',
       measureFirst: '[Sample] How long one monthly client report takes, start to finish.',
       confidence: 'worth-checking',
@@ -334,7 +333,7 @@ const baseReport = (req: AuditRequest, mockCase: MockCase): AuditReport => {
       { id: 'ga4', name: 'Google Analytics 4', category: 'analytics' },
     ],
     fixFirst: rankFixFirst({ checks: [...security, ...health] }),
-    attributions: wp ? ['Vulnerability data: Wordfence Intelligence'] : [],
+    attributions: wp ? ['Wordfence Intelligence (vulnerability data, https://www.wordfence.com/threat-intel/)'] : [],
   };
 };
 
@@ -387,6 +386,8 @@ export const createMockTransport = (search: string): Transport => {
       sessions.set(session, report.auditId);
       return { status: 200, body: { ...report, session, features } };
     }
+
+    if (path === '/api/event' && method === 'POST') return { status: 204, body: null };
 
     if (path === '/api/feedback' && method === 'POST') {
       await wait(200);

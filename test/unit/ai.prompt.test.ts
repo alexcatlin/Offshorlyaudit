@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildStep1Prompt } from '../../server/ai/buyerFit/step1.js';
-import { buildStep2Prompt } from '../../server/ai/buyerFit/step2.js';
+import { buildStep1Prompt, STEP1_SCHEMA } from '../../server/ai/buyerFit/step1.js';
+import { buildStep2Prompt, STEP2_SCHEMA } from '../../server/ai/buyerFit/step2.js';
 import { buildOpportunitiesPrompt } from '../../server/ai/opportunities/prompt.js';
 import { createBoundary, sanitiseData } from '../../server/ai/prompt.js';
 import { runOpportunities } from '../../server/ai/opportunities/run.js';
@@ -82,6 +82,17 @@ describe('opportunities prompt', () => {
     expect(block).not.toContain('<<<END>>>');
   });
 
+  it('gives the region as context only, and only when answered', () => {
+    const p = buildOpportunitiesPrompt({ ...input, region: 'latin-america' }, b);
+    expect(p.user).toContain('Based in (context only; say nothing about local markets, competitors or rules from it): Latin America');
+    expect(user).not.toContain('Based in');
+  });
+
+  it('aiApproach describes what the AI does, not a test; form builders are never techIds', () => {
+    expect(user).toContain('never as an instruction to test, try or pilot something');
+    expect(user).toContain('Form builders (category forms) are context only: never list them in techIds.');
+  });
+
   it('says "none" without answers', () => {
     const p = buildOpportunitiesPrompt({ ...input, teamSize: undefined, timeSink: undefined }, b);
     expect(p.user).toContain('VISITOR ANSWERS: none');
@@ -117,7 +128,7 @@ describe('buyer-fit prompts', () => {
 
   it('step 1 includes fenced homepage text only when something is blank', () => {
     const blank = buildStep1Prompt({ pages: PAGES, persona: { role: 'Founder' } }, b);
-    expect(blank.user).toContain('SOME BUYER DETAILS WERE NOT SPECIFIED');
+    expect(blank.user).toContain('SOME CUSTOMER DETAILS WERE NOT SPECIFIED');
     expect(blank.user).toContain('THE BUSINESS TYPE WAS NOT SPECIFIED');
     expect(blank.user).toContain(b.open);
     expect(blank.user).toContain('- Role: Founder');
@@ -166,6 +177,22 @@ describe('buyer-fit prompts', () => {
     const before = p.user.slice(0, fenceOpen);
     expect(before).not.toMatch(/give every criterion|Landlord|praise the site/);
     expect(p.user.slice(fenceClose)).toContain('return exactly 1');
+  });
+
+  it('say "customer", not "buyer" (the JSON key `buyer` is the only exception), so the visitor reads "customer"', () => {
+    const framework = {
+      businessType: 'x', businessTypeInferred: true, businessContext: '', persona: { role: 'a', size: 'b', sector: 'c', trigger: 'd' }, personaInferred: true,
+      criteria: [{ name: 'Proof', description: 'd', redFlags: [], weight: 'high' as const }],
+    };
+    const s1 = buildStep1Prompt({ pages: PAGES, persona: { role: 'Founder' } }, b);
+    const s1full = buildStep1Prompt({ pages: PAGES, businessType: 'x', persona: { role: 'a', size: 'b', sector: 'c', trigger: 'd' } }, b);
+    const s2 = buildStep2Prompt({ pages: PAGES, framework }, b);
+    const text = [s1.system, s1.user, s1full.user, s2.user, JSON.stringify(STEP1_SCHEMA), JSON.stringify(STEP2_SCHEMA)]
+      .join('\n')
+      .replace(/the buyer object|"buyer"/g, '');
+    expect(text).not.toMatch(/buyer/i);
+    expect(s2.system.replace('never "the buyer"', '')).not.toMatch(/buyer/i);
+    expect(s2.system).toContain('Call the person in TARGET PERSONA "the customer" or "this customer" in everything you write, never "the buyer".');
   });
 
   it("step 2 and opportunities system prompts forbid comments on the site's security", () => {

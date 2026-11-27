@@ -165,9 +165,9 @@ export const CHECK_TEXT: Record<CheckId, CheckText> = {
     action: 'Add structured data describing your business',
   },
   'geo-questions': {
-    label: "Answers buyers' questions",
-    fix: 'AI tools and search engines often answer questions directly. Pages that clearly answer the questions your buyers ask, such as cost, timescales or how you work, are more likely to be used.',
-    action: "Add answers to your buyers' common questions",
+    label: "Answers customers' questions",
+    fix: 'AI tools and search engines often answer questions directly. Pages that clearly answer the questions your customers ask, such as cost, timescales or how you work, are more likely to be used.',
+    action: "Add answers to your customers' common questions",
   },
 
   // ---------- Website health: speed basics ----------

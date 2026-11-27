@@ -2,6 +2,7 @@
 // set; otherwise every /api/admin path is a plain 404.
 //
 //   GET    /api/admin/feedback.csv        idea feedback, last vote per (session, idea) wins
+//   GET    /api/admin/measures.csv        success measures per UTC day (?from=&to=, default last 30 days; spec 001)
 //   DELETE /api/admin/share/:shareId      deletion requests for a shared report
 //   GET    /api/admin/research            cached industry search results and the last audit/refresh
 //                                         outcome per industry with its reason code (Phase 5; 404 when off)
@@ -15,6 +16,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { feedbackCsv } from '../feedback/store.js';
 import type { FeedbackStore } from '../feedback/store.js';
 import type { SlidingWindowLimiter } from '../http/limits.js';
+import { isDay, MAX_RANGE_DAYS, measuresCsv } from '../metrics/measures.js';
+import type { MetricsStore } from '../metrics/store.js';
 import { sendError } from '../http/security.js';
 import type { IndustryResearch } from '../search/industryResearch.js';
 import type { ReportStore } from '../share/store.js';
@@ -23,6 +26,9 @@ import { SHARE_ID_RE } from '../share/store.js';
 export interface AdminRouteDeps {
   token: string;
   feedback: FeedbackStore;
+  /** Daily counters (spec 001). */
+  metrics: MetricsStore;
+  now: () => number;
   reports: ReportStore | null;
   /** Phase 5 research cache; null/absent = search off. */
   research?: IndustryResearch | null;
@@ -61,6 +67,20 @@ export const registerAdminRoutes = (app: FastifyInstance, deps: AdminRouteDeps):
       .type('text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="feedback.csv"')
       .send(feedbackCsv(deps.feedback.list()));
+  });
+
+  app.get<{ Querystring: { from?: string; to?: string } }>('/api/admin/measures.csv', async (req, reply) => {
+    if (!guard(req, reply)) return reply;
+    const day = (offset: number) => new Date(deps.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const to = req.query.to ?? day(0);
+    const from = req.query.from ?? day(-29);
+    if (!isDay(from) || !isDay(to) || from > to || (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1 > MAX_RANGE_DAYS) {
+      return sendError(reply, 400, { code: 'bad_request', error: 'Bad request.' });
+    }
+    return reply
+      .type('text/csv; charset=utf-8')
+      .header('content-disposition', 'attachment; filename="measures.csv"')
+      .send(measuresCsv(deps.metrics.range(from, to), deps.feedback.list(), from, to));
   });
 
   app.get('/api/admin/research', async (req, reply) => {
