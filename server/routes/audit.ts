@@ -133,6 +133,12 @@ const inputHost = (url: URL): string => url.hostname.toLowerCase().replace(/^www
 
 const AUDIT_ID_RE = /^[A-Za-z0-9_-]{22,64}$/;
 
+const trimTrailingSlashes = (s: string): string => {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === '/') end--;
+  return s.slice(0, end);
+};
+
 /** Cache key: normalised URL + a hash of everything that changes the AI output. */
 export const cacheKey = (req: AuditRequest, url: URL): string => {
   const answers = JSON.stringify([
@@ -148,7 +154,7 @@ export const cacheKey = (req: AuditRequest, url: URL): string => {
     req.region ?? '',
   ]);
   const hash = createHash('sha256').update(answers).digest('hex').slice(0, 16);
-  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '') || '/'}${url.search}#${hash}`;
+  return `${url.protocol}//${url.host}${trimTrailingSlashes(url.pathname) || '/'}${url.search}#${hash}`;
 };
 
 const entryFromRun = (run: AuditRun): AuditEntry => {

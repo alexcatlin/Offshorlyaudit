@@ -107,7 +107,7 @@ export const DEFAULT_ALLOWLIST = ['@offshorly.com'];
 
 const str = (env: Env, key: string): string | null => {
   const v = env[key]?.trim();
-  return v ? v : null;
+  return v || null;
 };
 
 const int = (env: Env, key: string, def: number, min: number, max: number): number => {
@@ -204,7 +204,8 @@ export const loadConfig = (env: Env = process.env): Config => {
   if (modeRaw !== null && !['live', 'fixture', 'off'].includes(modeRaw)) {
     throw new ConfigError('AI_MODE must be live, fixture or off.');
   }
-  const aiMode: AiMode = (modeRaw as AiMode | null) ?? (anthropicApiKey ? 'live' : isProduction ? 'off' : 'fixture');
+  const idleMode: AiMode = isProduction ? 'off' : 'fixture';
+  const aiMode: AiMode = (modeRaw as AiMode | null) ?? (anthropicApiKey ? 'live' : idleMode);
   if (aiMode === 'fixture' && isProduction) {
     throw new ConfigError('AI_MODE=fixture is not allowed in production: it shows sample output to real visitors.');
   }
@@ -273,7 +274,7 @@ export const loadConfig = (env: Env = process.env): Config => {
   if (mailProvider) {
     if (!mailApiKey) warnings.push('MAIL_PROVIDER is set but MAIL_API_KEY is empty: report email is off.');
     else if (!mailFrom) warnings.push('MAIL_FROM is missing or not a valid "Name <address>": report email is off.');
-    else if (!publicOrigin || !publicOrigin.startsWith('https:')) {
+    else if (!publicOrigin?.startsWith('https:')) {
       warnings.push('PUBLIC_ORIGIN must be an https origin for report email: report email is off.');
     } else mailConfigured = true;
     if (replyRaw && !mailReplyTo) warnings.push('MAIL_REPLY_TO is not a valid address and is ignored.');

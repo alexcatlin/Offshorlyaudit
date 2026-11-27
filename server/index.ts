@@ -81,12 +81,9 @@ const mailer =
 if (mailer && !reports) log('warn', 'Report email needs share links (SHARE_LINKS=on): report email is off');
 
 // Phase 5: industry web search. SerpApi with a key, or the dev/test fixture; otherwise off.
+const fixtureSearch = config.searchProvider === 'fixture' ? createFixtureSearchProvider() : null;
 const searchProvider =
-  config.searchProvider === 'serpapi' && config.searchApiKey
-    ? createSerpApiProvider({ apiKey: config.searchApiKey })
-    : config.searchProvider === 'fixture'
-      ? createFixtureSearchProvider()
-      : null;
+  config.searchProvider === 'serpapi' && config.searchApiKey ? createSerpApiProvider({ apiKey: config.searchApiKey }) : fixtureSearch;
 const research = searchProvider
   ? await createIndustryResearch({
       provider: searchProvider,

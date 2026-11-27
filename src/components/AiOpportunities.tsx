@@ -26,6 +26,15 @@ const SourceLink = ({ s }: { s: ExampleSource }) => (
   </ExternalLink>
 );
 
+const answerText = (field: 'timeSink' | 'tools' | 'teamSize', request: AuditRequest) => {
+  if (field === 'timeSink') return request.timeSink && `“${request.timeSink}”`;
+  if (field === 'tools') return request.tools && A.basisTools(request.tools);
+  if (request.teamSize) {
+    return A.basisTeamSize(TEAM_SIZE_OPTIONS.find((o) => o.value === request.teamSize)?.label ?? request.teamSize);
+  }
+  return undefined;
+};
+
 const BasisItem = ({ b, request }: { b: Basis; request: AuditRequest }) => {
   if (b.kind === 'quote') {
     return (
@@ -41,14 +50,7 @@ const BasisItem = ({ b, request }: { b: Basis; request: AuditRequest }) => {
     );
   }
   if (b.kind === 'answer') {
-    const text =
-      b.field === 'timeSink'
-        ? request.timeSink && `“${request.timeSink}”`
-        : b.field === 'tools'
-          ? request.tools && A.basisTools(request.tools)
-          : request.teamSize
-            ? A.basisTeamSize(TEAM_SIZE_OPTIONS.find((o) => o.value === request.teamSize)?.label ?? request.teamSize)
-            : undefined;
+    const text = answerText(b.field, request);
     return (
       <li class="oa-basis oa-basis--answer">
         <span class="oa-basis__kind">{A.basisToldUs}</span>
@@ -215,7 +217,7 @@ export const IndustryExamples = ({ examples, label, searchedAt }: { examples?: I
             <p class="oa-example__sources">
               <span class="oa-example__label">{A.examplesSource}</span>{' '}
               {e.sources.map((s, j) => (
-                <span key={j}>
+                <span key={s.domain}>
                   {j > 0 && '; '}
                   <SourceLink s={s} />
                 </span>
@@ -287,7 +289,7 @@ export const AiOpportunities = ({
   if (!ai || ai.opportunities.length === 0) {
     let pitch: { heading: string; text: string } = { heading: A.pitchHeading, text: A.pitchText };
     if (status === 'thin') pitch = { heading: A.thinHeading, text: A.thinTab };
-    else if (status === 'insufficient' || (ai && ai.opportunities.length === 0)) pitch = { heading: A.pitchHeading, text: A.insufficient };
+    else if (status === 'insufficient' || ai?.opportunities.length === 0) pitch = { heading: A.pitchHeading, text: A.insufficient };
     else if (status === 'unavailable') pitch = { heading: A.pitchHeading, text: `${A.unavailableTab} ${A.pitchText}` };
     return (
       <div class="oa-ai">

@@ -6,8 +6,18 @@ import { ExternalLink } from './ui.js';
 
 const W = COPY.wordpress;
 
-const coreSource = (s: WordPressInfo['core']['source']): string | null =>
-  s === 'generator' ? W.sourceGenerator : s === 'feed' ? W.sourceFeed : s === 'asset' ? W.sourceAsset : null;
+const coreSource = (s: WordPressInfo['core']['source']): string | null => {
+  switch (s) {
+    case 'generator':
+      return W.sourceGenerator;
+    case 'feed':
+      return W.sourceFeed;
+    case 'asset':
+      return W.sourceAsset;
+    default:
+      return null;
+  }
+};
 
 const coreStatus = (s: WordPressInfo['core']['status']) => {
   switch (s) {

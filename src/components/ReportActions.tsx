@@ -177,13 +177,9 @@ export const ReportActions = ({ report, mode, onPdf, features, session, email }:
         </div>
       )}
       {canEmail && (
-        <p class="oa-actions__status oa-actions__status--email" role="status">
-          {mail.kind === 'done' ? mail.text : ''}
-        </p>
+        <output class="oa-actions__status oa-actions__status--email">{mail.kind === 'done' ? mail.text : ''}</output>
       )}
-      <p class="oa-actions__status" role="status">
-        {statusText}
-      </p>
+      <output class="oa-actions__status">{statusText}</output>
     </div>
   );
 };

@@ -77,6 +77,24 @@ export interface RankInput {
   buyerFitActions?: readonly Pick<ActionItem, 'impact' | 'effort'>[];
 }
 
+const pickFixFirst = (items: readonly FixItem[]): FixItem[] => {
+  const perSection: Partial<Record<FixSection, number>> = {};
+  const seenChecks = new Set<string>();
+  const picked: FixItem[] = [];
+  for (const item of items) {
+    if (picked.length >= FIX_FIRST_LIMIT) break;
+    if (item.checkId) {
+      if (seenChecks.has(item.checkId)) continue;
+      seenChecks.add(item.checkId);
+    }
+    const count = perSection[item.section] ?? 0;
+    if (count >= FIX_FIRST_PER_SECTION) continue;
+    perSection[item.section] = count + 1;
+    picked.push(item);
+  }
+  return picked;
+};
+
 /**
  * "Fix these first": top 5 by rank, no more than 2 from any one section
  * (buyer-fit, security, health). Ties keep input order (actions first, then checks).
@@ -97,7 +115,7 @@ export const rankFixFirst = ({ checks, buyerFitActions = [] }: RankInput): FixIt
   for (const check of checks) {
     if (check.status !== 'warn' && check.status !== 'fail') continue;
     const meta = CHECKS[check.id];
-    if (!meta || !meta.rankable) continue;
+    if (!meta?.rankable) continue;
     candidates.push({
       item: { source: 'check', section: meta.section, checkId: check.id },
       rank: checkRank(check),
@@ -106,20 +124,5 @@ export const rankFixFirst = ({ checks, buyerFitActions = [] }: RankInput): FixIt
   }
 
   candidates.sort((a, b) => b.rank - a.rank || a.order - b.order);
-
-  const perSection: Partial<Record<FixSection, number>> = {};
-  const seenChecks = new Set<string>();
-  const picked: FixItem[] = [];
-  for (const { item } of candidates) {
-    if (picked.length >= FIX_FIRST_LIMIT) break;
-    if (item.checkId) {
-      if (seenChecks.has(item.checkId)) continue;
-      seenChecks.add(item.checkId);
-    }
-    const count = perSection[item.section] ?? 0;
-    if (count >= FIX_FIRST_PER_SECTION) continue;
-    perSection[item.section] = count + 1;
-    picked.push(item);
-  }
-  return picked;
+  return pickFixFirst(candidates.map((c) => c.item));
 };

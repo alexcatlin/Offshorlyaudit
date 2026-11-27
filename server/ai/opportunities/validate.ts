@@ -79,11 +79,11 @@ export { disallowedFigures, FIGURE_PATTERN } from '../text.js';
 export interface ValidateContext {
   pages: readonly FetchedPage[];
   stack: readonly StackTechInput[];
-  teamSize?: OpportunitiesInput['teamSize'];
+  teamSize?: NonNullable<OpportunitiesInput['teamSize']>;
   timeSink?: string;
   tools?: string;
   businessType?: string;
-  industry?: OpportunitiesInput['industry'];
+  industry?: NonNullable<OpportunitiesInput['industry']>;
   /** Phase 5 search results given to the model (absent when search is off). */
   research?: IndustryResearchInput;
 }
@@ -174,7 +174,10 @@ const validateOne = (raw: Record<string, unknown>, sh: Shared): Classified => {
   const timeSink = (ctx.timeSink ?? '').trim();
   const tools = (ctx.tools ?? '').trim();
   const businessType = (ctx.businessType ?? '').trim();
-  const answerField: 'timeSink' | 'tools' | 'teamSize' | null = timeSink ? 'timeSink' : tools ? 'tools' : ctx.teamSize ? 'teamSize' : null;
+  let answerField: 'timeSink' | 'tools' | 'teamSize' | null = null;
+  if (timeSink) answerField = 'timeSink';
+  else if (tools) answerField = 'tools';
+  else if (ctx.teamSize) answerField = 'teamSize';
   const usesAnswer = raw.usesAnswer === true && answerField !== null;
 
   const siteBasis: Basis[] = [
@@ -355,7 +358,7 @@ export const validateOpportunities = (data: unknown, ctx: ValidateContext): Oppo
   // Phase 5: results count only for the industry they were searched for. A different resolved
   // industry (e.g. a wrong keyword guess) drops every example and source basis.
   const research = ctx.research;
-  const searched = research && research.industryId && research.sources.length ? research : null;
+  const searched = research?.industryId && research.sources.length ? research : null;
   const mismatch = !!searched && searched.industryId !== industry.id;
   const sources = new Map<string, ResearchSource>(searched && !mismatch ? searched.sources.map((r) => [r.id, r]) : []);
   const shared: Shared = {

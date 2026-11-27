@@ -245,7 +245,9 @@ describe('buildSnapshot', () => {
     expect(JSON.stringify(s)).not.toContain('audit_abcdefghijklmnopqrstuv');
     expect(s.report.aiStatus).toBe('ok');
     expect(s.report.buyerFitStatus).toBe('ok');
-    expect(s.answers).toEqual({ timeSink: 'chasing invoices', tools: 'Xero', teamSize: '11-50', region: 'europe', industry: 'legal', businessType: 'Law firm' });
+    expect(s.answers).toEqual({ timeSink: 'chasing invoices', tools: 'Xero', teamSize: '11-50', industry: 'legal', businessType: 'Law firm' });
+    expect(s.answers).not.toHaveProperty('region');
+    expect(JSON.stringify(s)).not.toContain('europe');
     expect(JSON.stringify(s)).not.toContain('Founder');
     expect(JSON.stringify(s)).not.toContain('utm_source');
     expect(s.createdAt).toBe(new Date(T0).toISOString());

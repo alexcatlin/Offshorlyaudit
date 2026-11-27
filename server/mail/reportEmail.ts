@@ -30,7 +30,7 @@ export interface ReportEmail {
 }
 
 export const escapeHtml = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 
 /** One line, no control characters (keeps the subject and text parts single-line per field). */
 const oneLine = (s: string): string => s.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').trim();
@@ -85,9 +85,10 @@ export const buildReportEmail = (input: ReportEmailInput): ReportEmail => {
 
   const p = (inner: string, style = 'margin:0 0 16px') => `<p style="${style}">${inner}</p>`;
   const e = escapeHtml;
+  const subject = `Your website audit for ${domain}`;
   const html = [
     '<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">',
-    `<title>${e(`Your website audit for ${domain}`)}</title></head>`,
+    `<title>${e(subject)}</title></head>`,
     '<body style="margin:0;padding:24px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a;background:#ffffff">',
     p(`Here's the link to the website audit you asked for: <a href="${e(url)}" style="color:#0b57d0">${e(url)}</a>`),
     p(`Website: ${e(domain)}, audited ${e(audited)}`),
@@ -99,5 +100,5 @@ export const buildReportEmail = (input: ReportEmailInput): ReportEmail => {
     '</body></html>',
   ].join('');
 
-  return { subject: `Your website audit for ${domain}`, text, html };
+  return { subject, text, html };
 };

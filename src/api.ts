@@ -23,7 +23,7 @@ import type {
   SharedReport,
 } from '../shared/types.js';
 import { BLOCKED_PLACEMENT } from '../shared/types.js';
-import { AuditError, networkError, toAuditError } from './lib/errors.js';
+import { networkError, toAuditError } from './lib/errors.js';
 
 export interface HttpResult {
   status: number;
@@ -119,7 +119,7 @@ export const emailReport = (session: string, email: string): Promise<EmailReport
 export const fetchShared = (shareId: string): Promise<SharedReport> =>
   call<SharedReport>('GET', `/api/share/${encodeURIComponent(shareId)}`);
 
-export { AuditError };
+export { AuditError } from './lib/errors.js';
 
 /** What this page counts as: a direct report (its session), the shared page, or neither. */
 type TrackContext = { session: string } | { shared: true } | null;

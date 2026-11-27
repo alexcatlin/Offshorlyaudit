@@ -50,7 +50,7 @@ const visitorStrings = (): string[] => [
 
 describe('check catalogue and wording', () => {
   it('has text for every CheckId', () => {
-    expect(CHECK_IDS.length).toBe(39);
+    expect(CHECK_IDS).toHaveLength(39);
     for (const id of CHECK_IDS) {
       const t = CHECK_TEXT[id];
       expect(t, id).toBeDefined();

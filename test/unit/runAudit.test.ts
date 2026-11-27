@@ -333,6 +333,14 @@ describe('Amendment 4: cache key', async () => {
     expect(blank.ok && cacheKey(blank.value, u)).toBe(base);
   });
 
+  it('drops trailing slashes from the path, however many', () => {
+    const key = (href: string) => cacheKey({ url: 'x' }, new URL(href));
+    expect(key('https://acme.example/a/b////')).toBe(key('https://acme.example/a/b'));
+    expect(key('https://acme.example////')).toBe(key('https://acme.example/'));
+    expect(key('https://acme.example//a//b')).not.toBe(key('https://acme.example/a/b'));
+    expect(key('https://acme.example/a/b/?q=1')).toContain('/a/b?q=1#');
+  });
+
   it('region: valid values kept, blank omitted, and it changes the key', () => {
     const base = cacheKey({ url: 'x' }, u);
     const r = validateAuditRequest({ url: 'x', region: 'europe' });

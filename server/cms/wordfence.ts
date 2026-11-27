@@ -126,7 +126,7 @@ export const parseFeedStream = async (
   const handle = (s: string): void => {
     let start = pieces ? 0 : -1;
     for (let i = 0; i < s.length; i++) {
-      const c = s.charCodeAt(i);
+      const c = s.codePointAt(i);
       if (inStr) {
         if (esc) esc = false;
         else if (c === 92) esc = true; // backslash

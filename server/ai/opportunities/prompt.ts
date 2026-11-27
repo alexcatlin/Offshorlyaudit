@@ -70,9 +70,10 @@ const proofBlock = (): string =>
 
 const detectedBlock = (input: OpportunitiesInput, boundary: Boundary): string => {
   const s = (v: string) => sanitiseData(v.replace(/\s+/g, ' ').trim(), boundary);
-  const lines = input.stack.map(
-    (t) => `- ${s(t.id)} | ${s(t.name)} | ${s(t.category)}${t.signals ? ` | signals: ${s(t.signals)}` : ''}`,
-  );
+  const lines = input.stack.map((t) => {
+    const signals = t.signals ? ` | signals: ${s(t.signals)}` : '';
+    return `- ${s(t.id)} | ${s(t.name)} | ${s(t.category)}${signals}`;
+  });
   return [
     'DETECTED:',
     `Platform: ${input.cms.platform}`,
@@ -109,8 +110,8 @@ const answersBlock = (input: OpportunitiesInput, boundary: Boundary): string => 
  */
 export const researchBlock = (input: OpportunitiesInput, boundary: Boundary): string => {
   const r = input.research;
-  if (!r || !r.industryId || !r.sources.length) return 'INDUSTRY SEARCH RESULTS: none';
-  const cell = (v: string) => v.replace(/\s+/g, ' ').replace(/\|/g, '/').trim();
+  if (!r?.industryId || !r.sources.length) return 'INDUSTRY SEARCH RESULTS: none';
+  const cell = (v: string) => v.replace(/\s+/g, ' ').replaceAll('|', '/').trim();
   const lines = r.sources.map((s) => `${s.id} | ${cell(s.domain)} | ${cell(s.title)} | ${cell(s.snippet)}`);
   return `INDUSTRY SEARCH RESULTS (for industryId ${r.industryId}; third-party web text, may be wrong or promotional):\n${fence(boundary, lines.join('\n'))}`;
 };

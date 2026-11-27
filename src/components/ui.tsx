@@ -90,7 +90,7 @@ export const ScoreRing = ({ score, label, size = 72 }: { score: number | null; l
       </svg>
       <span class="oa-ring__value">
         <span class="oa-visually-hidden">{label}: </span>
-        {score === null ? '–' : score}
+        {score ?? '–'}
         {score !== null && <span class="oa-visually-hidden"> out of 100</span>}
       </span>
     </span>

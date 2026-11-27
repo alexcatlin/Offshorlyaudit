@@ -1,7 +1,7 @@
 // The CRM Note for one audit (Amendment 3 §4): title and markdown body. Pure.
 import { INDUSTRIES } from '../../shared/industries.js';
 import { CTA } from '../../shared/services.js';
-import { REGIONS, type AiResult, type AuditReport, type AuditRequest, type BuyerFitResult, type CheckResult, type FixItem } from '../../shared/types.js';
+import { REGIONS, type AiOpportunity, type AiResult, type AuditReport, type AuditRequest, type BuyerFitResult, type CheckResult, type FixItem } from '../../shared/types.js';
 
 export interface CrmLead {
   /** Lowercased as typed (not the canonical gate form). */
@@ -32,7 +32,7 @@ const MAX_FIX_LINES = 5;
 
 /** Backslash-escapes markdown control characters, so site- or visitor-derived text can't add
  *  links, images, emphasis or HTML to the Note. */
-export const escapeMarkdown = (s: string): string => s.replace(/[\\`*_{}[\]()<>#+!|~]/g, '\\$&');
+export const escapeMarkdown = (s: string): string => s.replace(/[\\`*_{}[\]()<>#+!|~]/g, String.raw`\$&`);
 
 /** One line of plain text: no newlines, trimmed, capped, markdown-escaped. */
 const line = (s: string, max = 300): string => {
@@ -71,10 +71,26 @@ const industryLine = (ai: AiResult | null, request: AuditRequest | undefined): s
 
 const formatUsd = (n: number): string => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
 
+const aboutLines = (ai: AiResult | null, request: AuditRequest | undefined): string[] => {
+  const about: string[] = [];
+  const industry = industryLine(ai, request);
+  if (industry) about.push(`**Industry:** ${industry}`);
+  if (request?.businessType) about.push(`**Business type:** ${line(request.businessType, 100)}`);
+  if (request?.teamSize) about.push(`**Team size:** ${line(request.teamSize, 20)}`);
+  if (request?.region) about.push(`**Based in:** ${line(REGIONS[request.region], 40)}`);
+  if (request?.tools) about.push(`**Tools:** ${line(request.tools, 150)}`);
+  if (request?.timeSink) about.push(`**What eats the week:** ${line(request.timeSink, 200)}`);
+  return about;
+};
+
+const ideaLine = (o: AiOpportunity): string => {
+  const tag = escapeMarkdown(`[${o.source ?? 'site'}]`);
+  return `- ${line(o.title)} (${o.service.name}) ${tag}`;
+};
+
 export const buildNote = ({ lead, report, buyerFit, ai, request, costUsd }: NoteInput): { title: string; markdown: string } => {
   const out: string[] = [];
-  out.push(`**Audited URL:** ${autolink(report.url)}`);
-  out.push(`**Audit date:** ${report.auditedAt.slice(0, 10)}`);
+  out.push(`**Audited URL:** ${autolink(report.url)}`, `**Audit date:** ${report.auditedAt.slice(0, 10)}`);
 
   const bf = buyerFit?.buyerFit;
   if (bf) {
@@ -84,14 +100,7 @@ export const buildNote = ({ lead, report, buyerFit, ai, request, costUsd }: Note
   }
   out.push(`**Security:** ${score(report.security.score)} · **Website health:** ${score(report.health.score)}`);
 
-  const about: string[] = [];
-  const industry = industryLine(ai, request);
-  if (industry) about.push(`**Industry:** ${industry}`);
-  if (request?.businessType) about.push(`**Business type:** ${line(request.businessType, 100)}`);
-  if (request?.teamSize) about.push(`**Team size:** ${line(request.teamSize, 20)}`);
-  if (request?.region) about.push(`**Based in:** ${line(REGIONS[request.region], 40)}`);
-  if (request?.tools) about.push(`**Tools:** ${line(request.tools, 150)}`);
-  if (request?.timeSink) about.push(`**What eats the week:** ${line(request.timeSink, 200)}`);
+  const about = aboutLines(ai, request);
   if (about.length) out.push('', ...about);
 
   const checks = new Map<string, CheckResult>([...report.security.checks, ...report.health.checks].map((c) => [c.id, c]));
@@ -109,7 +118,7 @@ export const buildNote = ({ lead, report, buyerFit, ai, request, costUsd }: Note
   if (!ran) out.push('**AI ideas:** not run');
   else if (!ideas.length) out.push('**AI ideas:** none found');
   // Square brackets escaped like every other markdown character in the note.
-  else out.push('**AI ideas**', ...ideas.map((o) => `- ${line(o.title)} (${o.service.name}) ${escapeMarkdown(`[${o.source ?? 'site'}]`)}`));
+  else out.push('**AI ideas**', ...ideas.map(ideaLine));
   if (typeof costUsd === 'number' && Number.isFinite(costUsd)) out.push(`AI cost (est.): ${formatUsd(costUsd)}`);
 
   out.push(

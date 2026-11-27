@@ -28,7 +28,9 @@ const OWNERS: readonly Owner[] = ['leadership', 'marketing', 'developer'];
 
 /** Integer 0–10. Non-numbers → 0. */
 export const clampScore = (v: unknown): number => {
-  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  let n = Number.NaN;
+  if (typeof v === 'number') n = v;
+  else if (typeof v === 'string') n = Number(v);
   if (!Number.isFinite(n)) return 0;
   return Math.min(10, Math.max(0, Math.round(n)));
 };
@@ -60,8 +62,9 @@ export const postprocessCriteria = (
     const s1 = fromStep1 ? step1Criteria[i] : undefined;
     const evidence = cleanEvidence(c.evidence, pages, allowed);
     const modelName = cleanText(c.name, { words: 6, chars: 60 });
+    const fallbackName = (modelName && !hasBannedWords(modelName) ? modelName : '') || `Criterion ${i + 1}`;
     const out: ScoredCriterion = {
-      name: s1 ? s1.name : (modelName && !hasBannedWords(modelName) ? modelName : '') || `Criterion ${i + 1}`,
+      name: s1 ? s1.name : fallbackName,
       score: clampScore(c.score),
       reasoning: prose(c.reasoning, { words: 80, chars: 600 }, allowed),
       weight: s1 ? s1.weight : coerceEnum<CriterionWeight>(c.weight, LVLS, 'medium'),

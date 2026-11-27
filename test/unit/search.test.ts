@@ -161,7 +161,7 @@ describe('result hygiene', () => {
 
   it('strips HTML, entities and control characters; caps title 120 and snippet 300; one result per host; ≤8', () => {
     const hits: SearchHit[] = [
-      { title: '<b>Bold</b> &amp; ‮Reversed\u0007 title', snippet: `Snippet with <a href="x">link</a> https://evil.example/path and ${'word '.repeat(100)}`, url: 'https://a.example/1' },
+      { title: '<b>Bold</b> &amp; \u202EReversed\u0007 title', snippet: `Snippet with <a href="x">link</a> https://evil.example/path and ${'word '.repeat(100)}`, url: 'https://a.example/1' },
       { title: 'Same host', snippet: '', url: 'https://www.a.example/2' },
       { title: 'x'.repeat(300), snippet: '', url: 'https://b.example/' },
       { title: '', snippet: 'no title', url: 'https://c.example/' },

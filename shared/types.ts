@@ -467,7 +467,7 @@ export interface AuditStartResponse extends AuditReport {
 }
 
 /** The visitor answers a saved or printed report shows (BasisItem reads them). Never lead fields. */
-export type ShareAnswers = Pick<AuditRequest, 'timeSink' | 'tools' | 'teamSize' | 'region' | 'industry' | 'businessType'>;
+export type ShareAnswers = Pick<AuditRequest, 'timeSink' | 'tools' | 'teamSize' | 'industry' | 'businessType'>;
 
 /** A saved snapshot, built server-side from the server's own AuditEntry. No email, no auditId. */
 export interface SharedReport {

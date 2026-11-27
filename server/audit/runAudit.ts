@@ -115,7 +115,7 @@ export const LIMITS = {
   timeSink: 200,
   tools: 150,
 } as const;
-const TEAM_SIZES: readonly TeamSize[] = ['1-10', '11-50', '51-200', '200+'];
+const TEAM_SIZES: ReadonlySet<TeamSize> = new Set<TeamSize>(['1-10', '11-50', '51-200', '200+']);
 
 export type Validated = { ok: true; value: AuditRequest } | { ok: false; error: string };
 
@@ -170,7 +170,7 @@ export const validateAuditRequest = (body: unknown): Validated => {
   }
 
   if (b.teamSize !== undefined && b.teamSize !== null && b.teamSize !== '') {
-    if (!TEAM_SIZES.includes(b.teamSize as TeamSize)) return { ok: false, error: 'teamSize is not a valid option.' };
+    if (!TEAM_SIZES.has(b.teamSize as TeamSize)) return { ok: false, error: 'teamSize is not a valid option.' };
     out.teamSize = b.teamSize as TeamSize;
   }
   if (b.region !== undefined && b.region !== null && b.region !== '') {
@@ -221,7 +221,8 @@ const domainOf = (url: string): string => new URL(url).hostname.replace(/^www\./
 
 const errorCode = (e: unknown): string => {
   const code = (e as { code?: unknown } | null)?.code;
-  return typeof code === 'string' ? code : e instanceof Error ? e.name : 'unknown';
+  if (typeof code === 'string') return code;
+  return e instanceof Error ? e.name : 'unknown';
 };
 
 // Checks that depend on the extra site-file fetches; dropped if those miss the deadline.

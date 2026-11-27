@@ -51,7 +51,7 @@ export const LIMITS = {
   name: 100,
 } as const;
 
-const TEAM_SIZES: readonly TeamSize[] = ['1-10', '11-50', '51-200', '200+'];
+const TEAM_SIZES: ReadonlySet<TeamSize> = new Set<TeamSize>(['1-10', '11-50', '51-200', '200+']);
 
 export type UrlCheck = { ok: true; url: string } | { ok: false; reason: 'empty' | 'invalid' };
 
@@ -106,7 +106,7 @@ export const buildRequest = (values: FormValues, url: string): AuditStartBody =>
   }
   if (Object.keys(persona).length) req.persona = persona;
 
-  if (values.teamSize && TEAM_SIZES.includes(values.teamSize)) req.teamSize = values.teamSize;
+  if (values.teamSize && TEAM_SIZES.has(values.teamSize)) req.teamSize = values.teamSize;
   if (isRegion(values.region)) req.region = values.region;
   const timeSink = clip(values.timeSink, LIMITS.timeSink);
   if (timeSink) req.timeSink = timeSink;

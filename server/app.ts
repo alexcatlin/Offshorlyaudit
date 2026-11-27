@@ -6,12 +6,11 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyRequest, FastifyServerOptions } from 'fastify';
 import { AI_SLOTS_PER_AUDIT, limitAiConcurrency } from './audit/aiEngine.js';
-import type { AuditDeps } from './audit/runAudit.js';
+import type { AuditDeps, runAudit } from './audit/runAudit.js';
 import type { Config } from './config.js';
 import { DAY, DailyCounter, HOUR, MINUTE, Semaphore, SlidingWindowLimiter, TtlLruCache } from './http/limits.js';
 import type { Clock } from './http/limits.js';
 import { createIpHasher, originAllowed, rateLimitSubject, securityHeaders, sendError } from './http/security.js';
-import type { runAudit } from './audit/runAudit.js';
 import type { CrmSync } from './crm/sync.js';
 import { MemoryFeedbackStore } from './feedback/store.js';
 import { MemoryMetricsStore } from './metrics/store.js';
@@ -115,7 +114,7 @@ export interface AppDeps {
   mailer?: Mailer | null;
 }
 
-const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const escapeAttr = (s: string): string => s.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
 
 export const injectTypekit = (html: string, kitUrl: string | null): string =>
   html.replace('<!--TYPEKIT-->', kitUrl ? `<link rel="stylesheet" href="${escapeAttr(kitUrl)}">` : '');
@@ -152,7 +151,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
   let logger: FastifyServerOptions['logger'] = false;
   if (deps.logger) {
     const base = typeof deps.logger === 'object' ? deps.logger : {};
-    logger = { ...base, serializers: { ...((base as { serializers?: object }).serializers ?? {}), req: reqSerializer } };
+    logger = { ...base, serializers: { ...(base as { serializers?: object }).serializers, req: reqSerializer } };
   }
 
   // Trust the first N hops nearest the server (Render's proxy appends the real client to
@@ -199,12 +198,13 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
   const crm = deps.crm ?? null;
   const feedback = deps.feedback ?? new MemoryFeedbackStore({ now });
   const metrics = deps.metrics ?? new MemoryMetricsStore({ now });
-  const reports: ReportStore | null =
-    config.shareLinks === 'off'
-      ? null
-      : deps.reports === undefined
+  let reports: ReportStore | null = null;
+  if (config.shareLinks !== 'off') {
+    reports =
+      deps.reports === undefined
         ? new MemoryReportStore({ retentionDays: config.shareRetentionDays, maxFiles: config.shareMaxFiles, now })
         : deps.reports;
+  }
   const mailer = reports && deps.mailer && config.publicOrigin?.startsWith('https:') ? deps.mailer : null;
   const research = deps.audit.research ?? null;
   const features: Features = { share: !!reports, email: !!mailer, feedback: true, shareRetentionDays: config.shareRetentionDays };
